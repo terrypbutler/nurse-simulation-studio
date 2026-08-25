@@ -227,6 +227,19 @@ def add_learner_action(
     if action_id is not None:
         return apply_action(case, session, action_id, minutes, learner_text=clean)
 
+    return record_unmapped_action(case, session, clean, minutes)
+
+
+def record_unmapped_action(
+    case: dict[str, Any], session: dict[str, Any], text: str, minutes: int = 2
+) -> ActionResult:
+    """Record an action that has no safe deterministic state transition."""
+
+    clean = " ".join(text.split())[:600]
+    if not clean:
+        return ActionResult(False, "Describe one nursing action first.")
+    if session.get("status") != "active":
+        return ActionResult(False, "This simulation has ended. Restart it to continue.")
     session["state"]["elapsed_minutes"] += max(0, minutes)
     session["transcript"].append(
         {

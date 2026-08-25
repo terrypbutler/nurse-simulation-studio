@@ -4,6 +4,7 @@ import unittest
 
 from modules import ai_client
 from modules.patient_dialogue import (
+    assess_proposed_action,
     generate_interaction_evaluation,
     generate_patient_reply,
 )
@@ -183,6 +184,61 @@ class PatientDialogueTests(unittest.TestCase):
         self.assertEqual(captured["config"]["response_schema"]["type"], "object")
         self.assertNotIn("facilitator_only", captured["prompt"])
         self.assertNotIn("expected_safety_points", captured["prompt"])
+
+    def test_ai_assesses_unscripted_action_on_one_to_five_scale(self):
+        captured = {}
+
+        class FakeModel:
+            def generate_content(self, prompt, generation_config=None):
+                captured["prompt"] = prompt
+                captured["config"] = generation_config
+                return types.SimpleNamespace(
+                    text=(
+                        '{"matched_action_id":"check_identity","suitability_score":5,'
+                        '"confidence":0.91,"rationale":"This is timely and supports safe '
+                        'identification before further care."}'
+                    )
+                )
+
+        assessment = assess_proposed_action(
+            self.case,
+            self.session,
+            "Before anything else, I compare the wrist band with the record.",
+            "Could I confirm your details first?",
+            model=FakeModel(),
+        )
+
+        self.assertTrue(assessment.generated)
+        self.assertEqual(assessment.matched_action_id, "check_identity")
+        self.assertEqual(assessment.suitability_score, 5)
+        self.assertEqual(assessment.suitability_band, "strongly_appropriate")
+        self.assertAlmostEqual(assessment.confidence, 0.91)
+        schema = captured["config"]["response_schema"]
+        self.assertEqual(schema["properties"]["suitability_score"]["minimum"], 1)
+        self.assertIn("check_identity", schema["properties"]["matched_action_id"]["enum"])
+        self.assertIn("Consent and dignity", captured["prompt"])
+        self.assertNotIn('"effects"', captured["prompt"])
+
+    def test_reasonable_unbounded_action_can_be_scored_without_state_mapping(self):
+        class FakeModel:
+            def generate_content(self, _prompt, generation_config=None):
+                return types.SimpleNamespace(
+                    text=(
+                        '{"matched_action_id":"none","suitability_score":4,'
+                        '"confidence":0.88,"rationale":"This supports comfort without '
+                        'claiming a clinical effect."}'
+                    )
+                )
+
+        assessment = assess_proposed_action(
+            self.case,
+            self.session,
+            "I adjust the pillows for comfort.",
+            model=FakeModel(),
+        )
+        self.assertEqual(assessment.suitability_score, 4)
+        self.assertIsNone(assessment.matched_action_id)
+        self.assertTrue(assessment.generated)
 
     def test_blocked_action_rating_cannot_be_overridden_by_model(self):
         class OverlyPositiveModel:

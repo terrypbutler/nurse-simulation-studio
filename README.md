@@ -37,6 +37,7 @@ py .\sample_patients\validate_cases.py
 - Four synthetic patient cases
 - Patient library and learner briefs
 - Authored nursing actions with prerequisite checks
+- AI interpretation of natural-language actions with a 1–5 suitability range
 - Combined action-and-dialogue submission with patient-state-aware formative feedback
 - Deterministic time-triggered changes
 - Optional AI-phrased patient dialogue with safe authored fallback replies
@@ -47,3 +48,9 @@ py .\sample_patients\validate_cases.py
 
 The cases remain development fixtures until reviewed and approved through the
 appropriate nursing-education and local clinical-governance processes.
+
+Action suitability uses five educator-reviewable dimensions: patient-centredness,
+effectiveness and relevance, safety and timing, consent and dignity, and
+communication and professional trust. AI can score any proposed action, but it
+can only change simulation state when it confidently maps an appropriate action
+to one of the case's bounded, educator-authored transitions.

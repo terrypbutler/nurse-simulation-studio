@@ -10,6 +10,7 @@ from modules.simulation_engine import (
     load_cases,
     match_action_id,
     new_session,
+    record_unmapped_action,
     student_export,
 )
 
@@ -82,6 +83,15 @@ class SimulationEngineTests(unittest.TestCase):
         self.assertEqual(self.session["state"]["pain_score"], original_state["pain_score"])
         self.assertIsNone(self.session["action_log"][0]["action_id"])
         self.assertFalse(self.session["action_log"][0]["applied"])
+
+    def test_ai_unmapped_action_helper_never_changes_authored_clinical_facts(self):
+        original = deepcopy(self.session["state"])
+        result = record_unmapped_action(
+            self.case, self.session, "I adjust the pillows for comfort."
+        )
+        self.assertTrue(result.applied)
+        self.assertEqual(self.session["state"]["pain_score"], original["pain_score"])
+        self.assertEqual(self.session["action_log"][-1]["action_id"], None)
 
     def test_student_export_excludes_facilitator_notes(self):
         self.session["feedback_log"].append(

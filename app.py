@@ -10,17 +10,22 @@ import streamlit as st
 
 from modules import ai_client
 from modules.patient_dialogue import (
+    ACTION_MAPPING_CONFIDENCE,
+    ASSESSMENT_CRITERIA,
+    assess_proposed_action,
     authored_dialogue_fallback,
     generate_interaction_evaluation,
 )
 from modules.simulation_engine import (
     add_learner_action,
+    apply_action,
     append_patient_response,
     case_by_id,
     end_session,
     load_cases,
     new_session,
     record_learner_dialogue,
+    record_unmapped_action,
     remove_latest_patient_response,
     student_export,
 )
@@ -260,14 +265,31 @@ def render_latest_feedback(session: dict) -> None:
         "unclear": "Unclear — facilitator review needed",
     }
     st.markdown("#### Formative interaction feedback")
+    score = latest.get("suitability_score")
+    if score is not None:
+        score_labels = {
+            1: "Clearly concerning",
+            2: "Concerning",
+            3: "Mixed or unclear",
+            4: "Appropriate",
+            5: "Strongly appropriate",
+        }
+        st.markdown(f"**Proposed action suitability: {score}/5 — {score_labels[score]}**")
     if rating == "appropriate":
-        st.success(f"**{labels[rating]}**  \n{latest['feedback']}")
+        st.success(f"**Combined interaction: {labels[rating]}**  \n{latest['feedback']}")
     elif rating == "concerning":
-        st.warning(f"**{labels[rating]}**  \n{latest['feedback']}")
+        st.warning(f"**Combined interaction: {labels[rating]}**  \n{latest['feedback']}")
     else:
-        st.info(f"**{labels[rating]}**  \n{latest['feedback']}")
-    source = "AI-supported" if latest.get("generated") else "Authored fallback"
+        st.info(f"**Combined interaction: {labels[rating]}**  \n{latest['feedback']}")
+    source = (
+        "AI-supported"
+        if latest.get("generated") or latest.get("action_assessment_generated")
+        else "Authored fallback"
+    )
     st.caption(f"{source} feedback on this interaction only · not a competence assessment")
+    with st.expander("How action suitability is judged", expanded=False):
+        for criterion in ASSESSMENT_CRITERIA:
+            st.markdown(f"- {criterion}")
 
 
 def render_simulation() -> None:
@@ -337,9 +359,36 @@ def render_simulation() -> None:
                 canonical_reply = authored_dialogue_fallback(case, session)
                 action_status = "not_provided"
                 matched_action_label = None
+                action_assessment = None
 
                 if action_clean:
-                    action_result = add_learner_action(case, session, action_clean)
+                    if AI_READY:
+                        with st.spinner("Assessing the proposed action against the patient state…"):
+                            action_assessment = assess_proposed_action(
+                                case, session, action_clean, dialogue_clean
+                            )
+
+                    can_apply_ai_mapping = bool(
+                        action_assessment
+                        and action_assessment.generated
+                        and action_assessment.matched_action_id
+                        and action_assessment.confidence >= ACTION_MAPPING_CONFIDENCE
+                        and action_assessment.suitability_score >= 4
+                    )
+                    if can_apply_ai_mapping:
+                        action_result = apply_action(
+                            case,
+                            session,
+                            action_assessment.matched_action_id,
+                            learner_text=action_clean,
+                        )
+                    elif AI_READY:
+                        action_result = record_unmapped_action(
+                            case, session, action_clean
+                        )
+                    else:
+                        action_result = add_learner_action(case, session, action_clean)
+
                     if not action_result.applied:
                         action_status = "blocked"
                         canonical_reply = action_result.message
@@ -351,7 +400,9 @@ def render_simulation() -> None:
                             canonical_reply = action_result.message
                             remove_latest_patient_response(session)
                         else:
-                            action_status = "unrecognised"
+                            action_status = (
+                                "assessed_only" if action_assessment else "unrecognised"
+                            )
 
                 if dialogue_clean:
                     dialogue_minutes = 0 if action_status in {"applied", "unrecognised"} else 1
@@ -369,6 +420,7 @@ def render_simulation() -> None:
                         action_status=action_status,
                         canonical_reply=canonical_reply,
                         matched_action_label=matched_action_label,
+                        action_assessment=action_assessment,
                     )
 
                 if AI_READY:
@@ -378,15 +430,44 @@ def render_simulation() -> None:
                     evaluation = evaluate()
 
                 append_patient_response(case, session, evaluation.patient_reply)
+                fallback_score = {
+                    "applied": 4,
+                    "blocked": 2,
+                    "unrecognised": 3,
+                    "assessed_only": 3,
+                }.get(action_status)
                 session.setdefault("feedback_log", []).append(
                     {
                         "minute": session["state"]["elapsed_minutes"],
                         "action": action_clean,
                         "dialogue": dialogue_clean,
                         "action_status": action_status,
+                        "suitability_score": (
+                            action_assessment.suitability_score
+                            if action_assessment
+                            else fallback_score
+                        ),
+                        "suitability_band": (
+                            action_assessment.suitability_band
+                            if action_assessment
+                            else None
+                        ),
+                        "mapping_confidence": (
+                            action_assessment.confidence if action_assessment else None
+                        ),
+                        "matched_action_id": (
+                            action_assessment.matched_action_id
+                            if action_assessment
+                            else latest_action.get("action_id")
+                            if action_clean and session["action_log"]
+                            else None
+                        ),
                         "rating": evaluation.rating,
                         "feedback": evaluation.feedback,
                         "generated": evaluation.generated,
+                        "action_assessment_generated": (
+                            action_assessment.generated if action_assessment else False
+                        ),
                     }
                 )
                 st.rerun()
