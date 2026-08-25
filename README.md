@@ -37,6 +37,7 @@ py .\sample_patients\validate_cases.py
 - Four synthetic patient cases
 - Patient library and learner briefs
 - Authored nursing actions with prerequisite checks
+- Combined action-and-dialogue submission with patient-state-aware formative feedback
 - Deterministic time-triggered changes
 - Optional AI-phrased patient dialogue with safe authored fallback replies
 - Restartable sessions

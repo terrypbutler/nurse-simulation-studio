@@ -100,12 +100,27 @@ class GenerativeModel:
         if _provider == OPENAI_PROVIDER:
             if _openai_client is None:
                 raise RuntimeError("OpenAI has not been configured with an API key.")
+            text_config = {"verbosity": "low"}
+            if (
+                generation_config
+                and generation_config.get("response_mime_type") == "application/json"
+            ):
+                response_schema = generation_config.get("response_schema")
+                if response_schema:
+                    text_config["format"] = {
+                        "type": "json_schema",
+                        "name": "nursing_interaction_evaluation",
+                        "strict": True,
+                        "schema": response_schema,
+                    }
+                else:
+                    text_config["format"] = {"type": "json_object"}
             response = _openai_client.responses.create(
                 model=OPENAI_DIALOGUE_MODEL,
                 input=str(contents),
                 reasoning={"effort": "low"},
-                text={"verbosity": "low"},
-                max_output_tokens=180,
+                text=text_config,
+                max_output_tokens=350,
                 store=False,
             )
             return ModelResponse(text=response.output_text or "")

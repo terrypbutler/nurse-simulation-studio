@@ -84,11 +84,18 @@ class SimulationEngineTests(unittest.TestCase):
         self.assertFalse(self.session["action_log"][0]["applied"])
 
     def test_student_export_excludes_facilitator_notes(self):
+        self.session["feedback_log"].append(
+            {
+                "rating": "appropriate",
+                "feedback": "This interaction fits the authored pathway.",
+            }
+        )
         end_session(self.session)
         exported = student_export(self.case, self.session)
         self.assertNotIn("facilitator_only", exported)
         self.assertNotIn("state", exported)
         self.assertEqual(exported["status"], "ended")
+        self.assertEqual(exported["formative_feedback"][0]["rating"], "appropriate")
 
 
 if __name__ == "__main__":

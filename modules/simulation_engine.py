@@ -69,6 +69,7 @@ def new_session(case: dict[str, Any], learner_name: str = "Learner") -> dict[str
             }
         ],
         "action_log": [],
+        "feedback_log": [],
         "reflection": {},
     }
 
@@ -293,6 +294,58 @@ def add_learner_dialogue(
     return ActionResult(True, reply, (), fired)
 
 
+def record_learner_dialogue(
+    case: dict[str, Any], session: dict[str, Any], text: str, minutes: int = 1
+) -> ActionResult:
+    """Record learner speech without creating a patient reply."""
+
+    clean = " ".join(text.split())[:600]
+    if not clean:
+        return ActionResult(False, "Enter something to say first.")
+    if session.get("status") != "active":
+        return ActionResult(False, "This simulation has ended. Restart it to continue.")
+
+    session["state"]["elapsed_minutes"] += max(0, minutes)
+    session["transcript"].append(
+        {
+            "role": "learner_dialogue",
+            "speaker": session["learner_name"],
+            "text": clean,
+            "minute": session["state"]["elapsed_minutes"],
+        }
+    )
+    fired = _resolve_due_events(case, session)
+    return ActionResult(True, "Dialogue recorded.", (), fired)
+
+
+def append_patient_response(
+    case: dict[str, Any], session: dict[str, Any], text: str
+) -> bool:
+    """Append patient wording without changing deterministic state."""
+
+    clean = " ".join(text.split())[:600]
+    if not clean:
+        return False
+    session["transcript"].append(
+        {
+            "role": "patient",
+            "speaker": case["patient"]["display_name"],
+            "text": clean,
+            "minute": session["state"]["elapsed_minutes"],
+        }
+    )
+    return True
+
+
+def remove_latest_patient_response(session: dict[str, Any]) -> str | None:
+    """Remove the latest patient wording so a combined reply can replace it."""
+
+    for index in range(len(session["transcript"]) - 1, -1, -1):
+        if session["transcript"][index]["role"] == "patient":
+            return str(session["transcript"].pop(index)["text"])
+    return None
+
+
 def replace_latest_patient_response(session: dict[str, Any], text: str) -> bool:
     """Replace only the latest patient wording; never alter clinical state."""
 
@@ -325,5 +378,6 @@ def student_export(case: dict[str, Any], session: dict[str, Any]) -> dict[str, A
         "elapsed_minutes": session["state"]["elapsed_minutes"],
         "transcript": deepcopy(session["transcript"]),
         "actions": deepcopy(session["action_log"]),
+        "formative_feedback": deepcopy(session.get("feedback_log", [])),
         "reflection": deepcopy(session.get("reflection", {})),
     }

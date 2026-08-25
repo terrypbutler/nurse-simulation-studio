@@ -3,12 +3,18 @@ import types
 import unittest
 
 from modules import ai_client
-from modules.patient_dialogue import generate_patient_reply
+from modules.patient_dialogue import (
+    generate_interaction_evaluation,
+    generate_patient_reply,
+)
 from modules.simulation_engine import (
     add_learner_dialogue,
+    append_patient_response,
     case_by_id,
     load_cases,
     new_session,
+    record_learner_dialogue,
+    remove_latest_patient_response,
     replace_latest_patient_response,
 )
 
@@ -30,13 +36,24 @@ class AiClientTests(unittest.TestCase):
         ai_client._provider = ai_client.OPENAI_PROVIDER
         ai_client._openai_client = types.SimpleNamespace(responses=FakeResponses())
         response = ai_client.GenerativeModel(ai_client.DIALOGUE_MODEL).generate_content(
-            "prompt"
+            "prompt",
+            generation_config={
+                "response_mime_type": "application/json",
+                "response_schema": {
+                    "type": "object",
+                    "properties": {"rating": {"type": "string"}},
+                    "required": ["rating"],
+                    "additionalProperties": False,
+                },
+            },
         )
 
         self.assertEqual(response.text, "A natural reply.")
         self.assertEqual(captured["model"], ai_client.OPENAI_DIALOGUE_MODEL)
         self.assertFalse(captured["store"])
-        self.assertEqual(captured["max_output_tokens"], 180)
+        self.assertEqual(captured["max_output_tokens"], 350)
+        self.assertEqual(captured["text"]["format"]["type"], "json_schema")
+        self.assertTrue(captured["text"]["format"]["strict"])
 
     def test_gemini_adapter_preserves_generate_content_interface(self):
         captured = {}
@@ -129,6 +146,77 @@ class PatientDialogueTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(self.session["transcript"][-1]["text"], "A revised natural reply.")
         self.assertEqual(self.session["state"], original)
+
+    def test_interaction_evaluation_considers_action_and_words_together(self):
+        captured = {}
+
+        class FakeModel:
+            def generate_content(self, prompt, generation_config=None):
+                captured["prompt"] = prompt
+                captured["config"] = generation_config
+                return types.SimpleNamespace(
+                    text=(
+                        '{"rating":"appropriate","feedback":"The identity check is '
+                        'appropriate and the explanation is respectful.","patient_reply":'
+                        '"Yes, you can check my wristband."}'
+                    )
+                )
+
+        before = deepcopy(self.session["state"])
+        evaluation = generate_interaction_evaluation(
+            case=self.case,
+            session=self.session,
+            state_before=before,
+            action_text="I will check her identity using two identifiers.",
+            dialogue_text="Hello Mrs Shaw, may I check your wristband and details?",
+            action_status="applied",
+            canonical_reply="The patient confirms her identity.",
+            matched_action_label="Use two identifiers against the simulated record",
+            model=FakeModel(),
+        )
+
+        self.assertTrue(evaluation.generated)
+        self.assertEqual(evaluation.rating, "appropriate")
+        self.assertIn("I will check her identity", captured["prompt"])
+        self.assertIn("may I check your wristband", captured["prompt"])
+        self.assertEqual(captured["config"]["response_mime_type"], "application/json")
+        self.assertEqual(captured["config"]["response_schema"]["type"], "object")
+        self.assertNotIn("facilitator_only", captured["prompt"])
+        self.assertNotIn("expected_safety_points", captured["prompt"])
+
+    def test_blocked_action_rating_cannot_be_overridden_by_model(self):
+        class OverlyPositiveModel:
+            def generate_content(self, _prompt, generation_config=None):
+                return types.SimpleNamespace(
+                    text=(
+                        '{"rating":"appropriate","feedback":"This seems fine.",'
+                        '"patient_reply":"Please explain what you are doing."}'
+                    )
+                )
+
+        evaluation = generate_interaction_evaluation(
+            case=self.case,
+            session=self.session,
+            state_before=deepcopy(self.session["state"]),
+            action_text="I will administer the charted option now.",
+            dialogue_text="This will help.",
+            action_status="blocked",
+            canonical_reply="The safety checks are incomplete.",
+            model=OverlyPositiveModel(),
+        )
+        self.assertEqual(evaluation.rating, "concerning")
+
+    def test_combined_transcript_helpers_do_not_change_clinical_facts(self):
+        original = deepcopy(self.session["state"])
+        removed = remove_latest_patient_response(self.session)
+        self.assertTrue(removed)
+        record_learner_dialogue(
+            self.case, self.session, "May I check your details?", minutes=0
+        )
+        append_patient_response(self.case, self.session, "Yes, that's fine.")
+        self.assertEqual(self.session["state"], original)
+        self.assertEqual(self.session["transcript"][-2]["role"], "learner_dialogue")
+        self.assertEqual(self.session["transcript"][-1]["role"], "patient")
 
 
 if __name__ == "__main__":

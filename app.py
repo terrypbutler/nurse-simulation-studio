@@ -2,21 +2,26 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from html import escape
 import json
 
 import streamlit as st
 
 from modules import ai_client
-from modules.patient_dialogue import generate_patient_reply
+from modules.patient_dialogue import (
+    authored_dialogue_fallback,
+    generate_interaction_evaluation,
+)
 from modules.simulation_engine import (
     add_learner_action,
-    add_learner_dialogue,
+    append_patient_response,
     case_by_id,
     end_session,
     load_cases,
     new_session,
-    replace_latest_patient_response,
+    record_learner_dialogue,
+    remove_latest_patient_response,
     student_export,
 )
 
@@ -243,6 +248,28 @@ def render_state(case: dict, session: dict, facilitator_mode: bool) -> None:
                 st.markdown(f"- {item}")
 
 
+def render_latest_feedback(session: dict) -> None:
+    feedback_log = session.get("feedback_log", [])
+    if not feedback_log:
+        return
+    latest = feedback_log[-1]
+    rating = latest["rating"]
+    labels = {
+        "appropriate": "Appropriate for this patient state",
+        "concerning": "Concerning for this patient state",
+        "unclear": "Unclear — facilitator review needed",
+    }
+    st.markdown("#### Formative interaction feedback")
+    if rating == "appropriate":
+        st.success(f"**{labels[rating]}**  \n{latest['feedback']}")
+    elif rating == "concerning":
+        st.warning(f"**{labels[rating]}**  \n{latest['feedback']}")
+    else:
+        st.info(f"**{labels[rating]}**  \n{latest['feedback']}")
+    source = "AI-supported" if latest.get("generated") else "Authored fallback"
+    st.caption(f"{source} feedback on this interaction only · not a competence assessment")
+
+
 def render_simulation() -> None:
     st.title("Run simulation")
     safety_banner()
@@ -276,71 +303,95 @@ def render_simulation() -> None:
     with left:
         render_state(case, session, facilitator_mode)
     with right:
-        st.subheader("Take a nursing action")
+        st.subheader("Plan your interaction")
         st.caption(
-            "Describe one action you intend to take. The available actions are not shown."
+            "The proposed action and spoken words are considered together against the "
+            "patient's current authored state."
         )
-        with st.form("action_form", clear_on_submit=True):
+        with st.form("interaction_form", clear_on_submit=True):
             action_text = st.text_area(
                 "What are you going to do?",
                 height=95,
                 placeholder="Describe one clear nursing action…",
                 disabled=session["status"] == "ended",
             )
-            action_submitted = st.form_submit_button(
-                "Take action · advances 2 minutes",
+            dialogue = st.text_area(
+                "What would you say?",
+                height=95,
+                placeholder="Write the words you would use with the patient…",
+                disabled=session["status"] == "ended",
+            )
+            submitted = st.form_submit_button(
+                "Submit interaction",
                 type="primary",
                 use_container_width=True,
                 disabled=session["status"] == "ended",
             )
-        if action_submitted:
-            result = add_learner_action(case, session, action_text)
-            if result.applied:
-                latest_action = session["action_log"][-1] if session["action_log"] else {}
-                if AI_READY and latest_action.get("applied"):
-                    with st.spinner("The patient is responding…"):
-                        reply = generate_patient_reply(
-                            case,
-                            session,
-                            action_text,
-                            canonical_reply=result.message,
-                        )
-                    replace_latest_patient_response(session, reply.text)
-                st.rerun()
-            else:
-                st.warning(result.message)
-
-        st.divider()
-        st.subheader("Speak to the patient")
-        st.caption(
-            "AI phrases the reply when configured; an authored fallback is always available. "
-            "Dialogue cannot change clinical facts."
-        )
-        with st.form("dialogue_form", clear_on_submit=True):
-            dialogue = st.text_area(
-                "What would you say?",
-                height=95,
-                disabled=session["status"] == "ended",
-            )
-            submitted = st.form_submit_button(
-                "Send · advances 1 minute",
-                use_container_width=True,
-                disabled=session["status"] == "ended",
-            )
         if submitted:
-            generated_reply = None
-            if AI_READY and dialogue.strip() and session["status"] == "active":
-                with st.spinner("The patient is responding…"):
-                    generated_reply = generate_patient_reply(
-                        case, session, dialogue
-                    ).text
-            result = add_learner_dialogue(
-                case, session, dialogue, reply_text=generated_reply
-            )
-            if result.applied:
-                st.rerun()
+            action_clean = " ".join(action_text.split())[:600]
+            dialogue_clean = " ".join(dialogue.split())[:600]
+            if not action_clean and not dialogue_clean:
+                st.warning("Describe an action, enter something to say, or provide both.")
             else:
-                st.warning(result.message)
+                state_before = deepcopy(session["state"])
+                canonical_reply = authored_dialogue_fallback(case, session)
+                action_status = "not_provided"
+                matched_action_label = None
+
+                if action_clean:
+                    action_result = add_learner_action(case, session, action_clean)
+                    if not action_result.applied:
+                        action_status = "blocked"
+                        canonical_reply = action_result.message
+                    else:
+                        latest_action = session["action_log"][-1]
+                        if latest_action.get("applied"):
+                            action_status = "applied"
+                            matched_action_label = latest_action["label"]
+                            canonical_reply = action_result.message
+                            remove_latest_patient_response(session)
+                        else:
+                            action_status = "unrecognised"
+
+                if dialogue_clean:
+                    dialogue_minutes = 0 if action_status in {"applied", "unrecognised"} else 1
+                    record_learner_dialogue(
+                        case, session, dialogue_clean, minutes=dialogue_minutes
+                    )
+
+                def evaluate():
+                    return generate_interaction_evaluation(
+                        case=case,
+                        session=session,
+                        state_before=state_before,
+                        action_text=action_clean,
+                        dialogue_text=dialogue_clean,
+                        action_status=action_status,
+                        canonical_reply=canonical_reply,
+                        matched_action_label=matched_action_label,
+                    )
+
+                if AI_READY:
+                    with st.spinner("The patient is responding and the interaction is being reviewed…"):
+                        evaluation = evaluate()
+                else:
+                    evaluation = evaluate()
+
+                append_patient_response(case, session, evaluation.patient_reply)
+                session.setdefault("feedback_log", []).append(
+                    {
+                        "minute": session["state"]["elapsed_minutes"],
+                        "action": action_clean,
+                        "dialogue": dialogue_clean,
+                        "action_status": action_status,
+                        "rating": evaluation.rating,
+                        "feedback": evaluation.feedback,
+                        "generated": evaluation.generated,
+                    }
+                )
+                st.rerun()
+
+        render_latest_feedback(session)
 
     st.divider()
     render_transcript(session)
