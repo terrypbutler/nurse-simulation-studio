@@ -19,12 +19,15 @@ REQUIRED_CASE_KEYS = {
     "setting",
     "patient",
     "learning",
+    "prebrief",
     "clinical",
+    "clinical_workspace",
     "initial_state",
     "time_events",
     "allowed_actions",
     "ai_contract",
     "facilitator_only",
+    "educator_rubric",
     "debrief",
 }
 
@@ -53,8 +56,8 @@ def validate() -> list[str]:
     data = json.loads(DATA_PATH.read_text(encoding="utf-8"))
     errors: list[str] = []
 
-    if data.get("schema_version") != "0.1.0":
-        errors.append("schema_version must be 0.1.0")
+    if data.get("schema_version") != "0.2.0":
+        errors.append("schema_version must be 0.2.0")
 
     cases = data.get("cases")
     if not isinstance(cases, list) or not cases:
@@ -82,6 +85,18 @@ def validate() -> list[str]:
         forbidden = patient_keys & FORBIDDEN_IDENTITY_KEYS
         if forbidden:
             errors.append(f"{prefix}: forbidden direct-identity keys {sorted(forbidden)}")
+        if not case.get("patient", {}).get("nonverbal_palette"):
+            errors.append(f"{prefix}: patient needs an educator-authored nonverbal palette")
+
+        prebrief = case.get("prebrief", {})
+        for key in ("role", "orientation", "resources", "limitations", "ground_rules"):
+            if not prebrief.get(key):
+                errors.append(f"{prefix}: prebrief is missing {key!r}")
+
+        workspace = case.get("clinical_workspace", {})
+        for key in ("handover", "environment", "available_resources", "record_access"):
+            if key not in workspace:
+                errors.append(f"{prefix}: clinical workspace is missing {key!r}")
 
         actions = case.get("allowed_actions", [])
         action_ids = [action.get("action_id") for action in actions]
@@ -99,6 +114,18 @@ def validate() -> list[str]:
             if concept not in prohibited_text:
                 errors.append(f"{prefix}: AI prohibition does not mention {concept!r}")
 
+        allowed_state_keys = case.get("ai_contract", {}).get("allowed_state_keys", [])
+        unknown_state_keys = set(allowed_state_keys) - set(case.get("initial_state", {}))
+        if unknown_state_keys:
+            errors.append(
+                f"{prefix}: AI contract references unknown state keys {sorted(unknown_state_keys)}"
+            )
+
+        rubric = case.get("educator_rubric", [])
+        rubric_ids = [item.get("criterion_id") for item in rubric]
+        if len(rubric) < 3 or len(rubric_ids) != len(set(rubric_ids)):
+            errors.append(f"{prefix}: educator rubric needs at least 3 unique criteria")
+
         if case.get("debrief", {}).get("automatic_competence_decision") is not False:
             errors.append(f"{prefix}: automatic competence decisions must be disabled")
 
@@ -112,4 +139,4 @@ if __name__ == "__main__":
         for problem in problems:
             print(f"- {problem}")
         raise SystemExit(1)
-    print("Validated 4 synthetic cases with no fixture safety errors.")
+    print("Validated 4 synthetic cases (schema 0.2.0) with no fixture safety errors.")

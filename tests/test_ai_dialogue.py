@@ -159,7 +159,9 @@ class PatientDialogueTests(unittest.TestCase):
                     text=(
                         '{"rating":"appropriate","feedback":"The identity check is '
                         'appropriate and the explanation is respectful.","patient_reply":'
-                        '"Yes, you can check my wristband."}'
+                        '"Yes, you can check my wristband.","nonverbal_cue":'
+                        '"Mrs Shaw pauses before answering and keeps one hand protectively '
+                        'over her operated side.","response_latency":"brief_pause"}'
                     )
                 )
 
@@ -178,10 +180,16 @@ class PatientDialogueTests(unittest.TestCase):
 
         self.assertTrue(evaluation.generated)
         self.assertEqual(evaluation.rating, "appropriate")
+        self.assertEqual(evaluation.response_latency, "brief_pause")
+        self.assertIn("Mrs Shaw pauses", evaluation.nonverbal_cue)
         self.assertIn("I will check her identity", captured["prompt"])
         self.assertIn("may I check your wristband", captured["prompt"])
         self.assertEqual(captured["config"]["response_mime_type"], "application/json")
         self.assertEqual(captured["config"]["response_schema"]["type"], "object")
+        self.assertIn(
+            evaluation.nonverbal_cue,
+            captured["config"]["response_schema"]["properties"]["nonverbal_cue"]["enum"],
+        )
         self.assertNotIn("facilitator_only", captured["prompt"])
         self.assertNotIn("expected_safety_points", captured["prompt"])
 
@@ -195,6 +203,7 @@ class PatientDialogueTests(unittest.TestCase):
                 return types.SimpleNamespace(
                     text=(
                         '{"matched_action_id":"check_identity","suitability_score":5,'
+                        '"relevance_category":"direct",'
                         '"confidence":0.91,"rationale":"This is timely and supports safe '
                         'identification before further care."}'
                     )
@@ -212,11 +221,13 @@ class PatientDialogueTests(unittest.TestCase):
         self.assertEqual(assessment.matched_action_id, "check_identity")
         self.assertEqual(assessment.suitability_score, 5)
         self.assertEqual(assessment.suitability_band, "strongly_appropriate")
+        self.assertEqual(assessment.relevance_category, "direct")
         self.assertAlmostEqual(assessment.confidence, 0.91)
         schema = captured["config"]["response_schema"]
         self.assertEqual(schema["properties"]["suitability_score"]["minimum"], 1)
         self.assertIn("check_identity", schema["properties"]["matched_action_id"]["enum"])
         self.assertIn("Consent and dignity", captured["prompt"])
+        self.assertIn("case_specific_educator_rubric", captured["prompt"])
         self.assertNotIn('"effects"', captured["prompt"])
 
     def test_reasonable_unbounded_action_can_be_scored_without_state_mapping(self):
@@ -225,6 +236,7 @@ class PatientDialogueTests(unittest.TestCase):
                 return types.SimpleNamespace(
                     text=(
                         '{"matched_action_id":"none","suitability_score":4,'
+                        '"relevance_category":"supportive",'
                         '"confidence":0.88,"rationale":"This supports comfort without '
                         'claiming a clinical effect."}'
                     )
@@ -237,6 +249,7 @@ class PatientDialogueTests(unittest.TestCase):
             model=FakeModel(),
         )
         self.assertEqual(assessment.suitability_score, 4)
+        self.assertEqual(assessment.relevance_category, "supportive")
         self.assertIsNone(assessment.matched_action_id)
         self.assertTrue(assessment.generated)
 
@@ -246,7 +259,8 @@ class PatientDialogueTests(unittest.TestCase):
                 return types.SimpleNamespace(
                     text=(
                         '{"rating":"appropriate","feedback":"This seems fine.",'
-                        '"patient_reply":"Please explain what you are doing."}'
+                        '"patient_reply":"Please explain what you are doing.",'
+                        '"nonverbal_cue":"","response_latency":"immediate"}'
                     )
                 )
 
@@ -269,9 +283,16 @@ class PatientDialogueTests(unittest.TestCase):
         record_learner_dialogue(
             self.case, self.session, "May I check your details?", minutes=0
         )
-        append_patient_response(self.case, self.session, "Yes, that's fine.")
+        append_patient_response(
+            self.case,
+            self.session,
+            "Yes, that's fine.",
+            nonverbal_cue=self.case["patient"]["nonverbal_palette"][0],
+            response_latency="brief_pause",
+        )
         self.assertEqual(self.session["state"], original)
-        self.assertEqual(self.session["transcript"][-2]["role"], "learner_dialogue")
+        self.assertEqual(self.session["transcript"][-3]["role"], "learner_dialogue")
+        self.assertEqual(self.session["transcript"][-2]["role"], "nonverbal")
         self.assertEqual(self.session["transcript"][-1]["role"], "patient")
 
 

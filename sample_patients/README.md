@@ -36,13 +36,15 @@ py .\validate_cases.py
 2. Display only `patient`, `clinical.visible_at_start` and cues that the
    deterministic engine has revealed.
 3. Accept only an action ID listed in `allowed_actions` or free-text dialogue.
-4. Apply time events and action effects in application code, never in the AI
+4. Apply time events, patient-experience changes and action effects in application code, never in the AI
    model.
-5. Give the AI only `ai_contract.allowed_context`, the currently revealed
-   clinical state and the student's exact words.
+5. Give the AI only `ai_contract.allowed_context`, `allowed_state_keys`, the
+   currently revealed cues and the student's exact words.
 6. Keep `facilitator_only` out of every AI request and student-facing export.
 7. Use the debrief prompts with a prepared educator; do not turn them into an
    automatic competence decision.
+8. Review and tailor the prebrief, clinical workspace, non-verbal palette and
+   educator rubric for the intended learner level and local setting.
 
 These samples are development fixtures, not validated curricula or clinical
 guidance. A nursing educator and the organisation's simulation, medicines,

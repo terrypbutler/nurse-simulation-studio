@@ -39,11 +39,14 @@ def render_provider_options() -> str:
     import streamlit as st
 
     return st.radio(
-        "Dialogue provider",
+        "AI provider",
         [GEMINI_PROVIDER, OPENAI_PROVIDER],
         horizontal=True,
         key=PROVIDER_OPTION_KEY,
-        help="Used only to phrase synthetic-patient replies. Clinical state remains authored.",
+        help=(
+            "Interprets learner interactions and phrases synthetic-patient replies. "
+            "Clinical state and consequences remain educator-authored."
+        ),
     )
 
 
@@ -79,12 +82,12 @@ def configure_selected_provider() -> tuple[bool, str]:
     secret_name = "OPENAI_API_KEY" if provider == OPENAI_PROVIDER else "GEMINI_API_KEY"
     api_key = get_secret(secret_name)
     if not api_key:
-        return False, f"Add {secret_name} to .streamlit/secrets.toml to enable AI replies."
+        return False, f"Add {secret_name} to .streamlit/secrets.toml to enable AI interactions."
     try:
         configure(provider, api_key)
     except (RuntimeError, ValueError):
         return False, "The selected AI provider could not be configured."
-    return True, f"{provider} dialogue is enabled."
+    return True, f"{provider} interaction support is enabled."
 
 
 class GenerativeModel:

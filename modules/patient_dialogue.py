@@ -11,19 +11,14 @@ from modules import ai_client
 from modules.simulation_content import free_text_response
 
 
-INTERACTION_RESPONSE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "rating": {
-            "type": "string",
-            "enum": ["appropriate", "concerning", "unclear"],
-        },
-        "feedback": {"type": "string"},
-        "patient_reply": {"type": "string"},
-    },
-    "required": ["rating", "feedback", "patient_reply"],
-    "additionalProperties": False,
-}
+RESPONSE_LATENCIES = ("immediate", "brief_pause", "long_pause")
+RELEVANCE_CATEGORIES = (
+    "direct",
+    "supportive",
+    "tangential",
+    "unclear",
+    "counterproductive",
+)
 
 
 @dataclass(frozen=True)
@@ -38,6 +33,8 @@ class InteractionEvaluation:
     feedback: str
     patient_reply: str
     generated: bool
+    nonverbal_cue: str = ""
+    response_latency: str = "immediate"
 
 
 @dataclass(frozen=True)
@@ -45,6 +42,7 @@ class ActionAssessment:
     matched_action_id: str | None
     suitability_score: int
     suitability_band: str
+    relevance_category: str
     confidence: float
     rationale: str
     generated: bool
@@ -65,6 +63,45 @@ def authored_dialogue_fallback(case: dict[str, Any], session: dict[str, Any]) ->
     return free_text_response(case["case_id"], prior)
 
 
+def authored_expression_fallback(
+    case: dict[str, Any], session: dict[str, Any]
+) -> tuple[str, str]:
+    """Choose one educator-authored behaviour cue for reliable offline realism."""
+
+    palette = case["patient"].get("nonverbal_palette", [])
+    if not palette:
+        return "", "immediate"
+    prior = sum(1 for item in session["transcript"] if item["role"] == "patient")
+    cue = str(palette[max(0, prior - 1) % len(palette)])
+    latency = "brief_pause" if prior % 2 else "immediate"
+    return cue, latency
+
+
+def _interaction_response_schema(case: dict[str, Any]) -> dict[str, Any]:
+    palette = [str(item) for item in case["patient"].get("nonverbal_palette", [])]
+    return {
+        "type": "object",
+        "properties": {
+            "rating": {
+                "type": "string",
+                "enum": ["appropriate", "concerning", "unclear"],
+            },
+            "feedback": {"type": "string"},
+            "patient_reply": {"type": "string"},
+            "nonverbal_cue": {"type": "string", "enum": ["", *palette]},
+            "response_latency": {"type": "string", "enum": list(RESPONSE_LATENCIES)},
+        },
+        "required": [
+            "rating",
+            "feedback",
+            "patient_reply",
+            "nonverbal_cue",
+            "response_latency",
+        ],
+        "additionalProperties": False,
+    }
+
+
 def _known_state(case: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     known: dict[str, Any] = {
         "elapsed_minutes": state["elapsed_minutes"],
@@ -73,12 +110,11 @@ def _known_state(case: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
             *state.get("revealed_cues", []),
         ],
     }
-    if "Consent state" in case["ai_contract"]["allowed_context"]:
-        known["consent_state"] = state.get("consent_state")
-    if state.get("pain_score_known"):
-        known["revealed_pain_score"] = state.get("pain_score")
-    if state.get("observations_measured"):
-        known["observations_have_been_measured"] = True
+    for key in case["ai_contract"].get("allowed_state_keys", []):
+        if key == "pain_score" and not state.get("pain_score_known"):
+            continue
+        if key in state:
+            known[key] = state[key]
     return known
 
 
@@ -158,12 +194,17 @@ def _action_assessment_schema(case: dict[str, Any]) -> dict[str, Any]:
         "properties": {
             "matched_action_id": {"type": "string", "enum": ["none", *action_ids]},
             "suitability_score": {"type": "integer", "minimum": 1, "maximum": 5},
+            "relevance_category": {
+                "type": "string",
+                "enum": list(RELEVANCE_CATEGORIES),
+            },
             "confidence": {"type": "number", "minimum": 0, "maximum": 1},
             "rationale": {"type": "string"},
         },
         "required": [
             "matched_action_id",
             "suitability_score",
+            "relevance_category",
             "confidence",
             "rationale",
         ],
@@ -194,7 +235,15 @@ def _action_assessment_prompt(case: dict[str, Any], session: dict[str, Any], act
         "presenting_context": case["clinical"]["presenting_context"],
         "current_revealed_state": _known_state(case, state),
         "learning_outcomes": case["learning"]["outcomes"],
-        "assessment_criteria": ASSESSMENT_CRITERIA,
+        "general_assessment_criteria": ASSESSMENT_CRITERIA,
+        "case_specific_educator_rubric": [
+            {
+                "criterion_id": item.get("criterion_id"),
+                "label": item.get("label"),
+                "guidance": item.get("guidance"),
+            }
+            for item in session.get("educator_rubric", case.get("educator_rubric", []))
+        ],
         "bounded_action_options": action_options,
         "learner_proposed_action": action_text,
         "learner_spoken_words": dialogue_text,
@@ -207,6 +256,13 @@ Score definitions:
 3 = mixed, ambiguous, or needs clarification/facilitator judgement
 4 = appropriate with no major concern
 5 = strongly appropriate, timely and well fitted to the patient's needs
+
+Relevance definitions:
+- direct: advances an important need or decision in the current encounter
+- supportive: improves comfort, access, trust or conditions for care without directly advancing the main task
+- tangential: plausible care but low priority for the current situation
+- unclear: intent or connection to the situation cannot be established
+- counterproductive: conflicts with safety, consent, dignity or the patient's current need
 
 Map matched_action_id to a bounded action only when the learner's meaning is genuinely equivalent. Use "none" for a reasonable action outside the bounded state engine as well as for irrelevant or unsafe actions. Confidence describes the semantic mapping, not confidence in the score.
 
@@ -229,6 +285,7 @@ def assess_proposed_action(
         None,
         3,
         _score_band(3),
+        "unclear",
         0.0,
         "The action needs facilitator review because AI assessment is unavailable.",
         False,
@@ -248,16 +305,23 @@ def assess_proposed_action(
         allowed_ids = {action["action_id"] for action in case["allowed_actions"]}
         matched_action_id = action_id if action_id in allowed_ids else None
         score = int(payload["suitability_score"])
+        relevance = str(payload["relevance_category"])
         confidence = max(0.0, min(1.0, float(payload["confidence"])))
         rationale = " ".join(str(payload["rationale"]).split())[:500]
     except (Exception, KeyError, TypeError, ValueError):
         return fallback
-    if score not in range(1, 6) or not rationale or _contains_unsafe_dose(rationale):
+    if (
+        score not in range(1, 6)
+        or relevance not in RELEVANCE_CATEGORIES
+        or not rationale
+        or _contains_unsafe_dose(rationale)
+    ):
         return fallback
     return ActionAssessment(
         matched_action_id,
         score,
         _score_band(score),
+        relevance,
         confidence,
         rationale,
         True,
@@ -289,10 +353,13 @@ def generate_patient_reply(
 
 
 def _fallback_evaluation(
+    case: dict[str, Any],
+    session: dict[str, Any],
     action_status: str,
     canonical_reply: str,
     action_assessment: ActionAssessment | None = None,
 ) -> InteractionEvaluation:
+    nonverbal_cue, response_latency = authored_expression_fallback(case, session)
     if action_assessment is not None:
         rating = (
             "appropriate"
@@ -308,6 +375,8 @@ def _fallback_evaluation(
             action_assessment.rationale,
             canonical_reply,
             False,
+            nonverbal_cue,
+            response_latency,
         )
     if action_status == "blocked":
         return InteractionEvaluation(
@@ -315,6 +384,8 @@ def _fallback_evaluation(
             "The proposed action is not safe to complete at this point because an authored prerequisite is missing.",
             canonical_reply,
             False,
+            nonverbal_cue,
+            response_latency,
         )
     if action_status == "applied":
         return InteractionEvaluation(
@@ -322,6 +393,8 @@ def _fallback_evaluation(
             "The proposed action fits the educator-authored pathway at the patient's current point in the scenario.",
             canonical_reply,
             False,
+            nonverbal_cue,
+            response_latency,
         )
     if action_status == "unrecognised":
         return InteractionEvaluation(
@@ -329,12 +402,16 @@ def _fallback_evaluation(
             "The proposed action could not be matched to an educator-authored pathway and needs facilitator review.",
             canonical_reply,
             False,
+            nonverbal_cue,
+            response_latency,
         )
     return InteractionEvaluation(
         "unclear",
         "No nursing action was proposed, so only the communication can be considered in facilitator review.",
         canonical_reply,
         False,
+        nonverbal_cue,
+        response_latency,
     )
 
 
@@ -345,6 +422,8 @@ Return one JSON object with exactly these string fields:
 - rating: one of "appropriate", "concerning", or "unclear"
 - feedback: 1-2 concise sentences explaining how the combined action and wording fit the patient's status
 - patient_reply: the fictional patient's next spoken reply in 1-3 short natural sentences
+- nonverbal_cue: exactly one cue from the supplied allowed palette, or an empty string
+- response_latency: one of "immediate", "brief_pause", or "long_pause"
 
 Evaluation rules:
 - This is feedback on one interaction, never a competence decision or grade.
@@ -354,6 +433,11 @@ Evaluation rules:
 - Base the explanation only on supplied facts. Do not invent observations, diagnoses, allergies, medicine names or doses, treatment effects, consent, clinical events, or required care.
 - Do not recommend treatment or reveal hidden information.
 - The patient reply must remain in character and must not coach or grade the learner.
+- Patient speech should sound spoken rather than polished: it may include a brief hesitation,
+  incomplete thought, correction or misunderstanding when consistent with the profile and state.
+  Do not make every reply a full summary and do not force these features into every turn.
+- Nonverbal behaviour and response latency may express only the supplied bounded emotional,
+  communication and visible state. They must not imply a new clinical fact.
 
 CONTEXT JSON:
 """ + json.dumps(context, ensure_ascii=False)
@@ -373,7 +457,9 @@ def generate_interaction_evaluation(
 ) -> InteractionEvaluation:
     """Evaluate action and speech together without allowing AI to change state."""
 
-    fallback = _fallback_evaluation(action_status, canonical_reply, action_assessment)
+    fallback = _fallback_evaluation(
+        case, session, action_status, canonical_reply, action_assessment
+    )
     context = {
         "patient": {
             "display_name": case["patient"]["display_name"],
@@ -393,12 +479,22 @@ def generate_interaction_evaluation(
             {
                 "score_out_of_5": action_assessment.suitability_score,
                 "band": action_assessment.suitability_band,
+                "relevance": action_assessment.relevance_category,
                 "rationale": action_assessment.rationale,
             }
             if action_assessment
             else None
         ),
         "canonical_authored_patient_reaction": canonical_reply,
+        "allowed_nonverbal_palette": case["patient"].get("nonverbal_palette", []),
+        "case_specific_educator_rubric": [
+            {
+                "criterion_id": item.get("criterion_id"),
+                "label": item.get("label"),
+                "guidance": item.get("guidance"),
+            }
+            for item in session.get("educator_rubric", case.get("educator_rubric", []))
+        ],
         "recent_transcript": session["transcript"][-10:],
     }
     try:
@@ -407,7 +503,7 @@ def generate_interaction_evaluation(
             _evaluation_prompt(context),
             generation_config={
                 "response_mime_type": "application/json",
-                "response_schema": INTERACTION_RESPONSE_SCHEMA,
+                "response_schema": _interaction_response_schema(case),
             },
         )
         raw = getattr(response, "text", "").strip().replace("```json", "").replace("```", "")
@@ -415,13 +511,29 @@ def generate_interaction_evaluation(
         rating = str(payload.get("rating", "")).strip().casefold()
         feedback = " ".join(str(payload.get("feedback", "")).split())[:500]
         patient_reply = _clean_reply(str(payload.get("patient_reply", "")))
+        nonverbal_cue = " ".join(str(payload.get("nonverbal_cue", "")).split())[:300]
+        response_latency = str(payload.get("response_latency", "")).strip()
     except Exception:
         return fallback
 
     if rating not in {"appropriate", "concerning", "unclear"}:
         return fallback
-    if not feedback or not patient_reply or _contains_unsafe_dose(feedback + " " + patient_reply):
+    allowed_cues = {"", *case["patient"].get("nonverbal_palette", [])}
+    if (
+        not feedback
+        or not patient_reply
+        or nonverbal_cue not in allowed_cues
+        or response_latency not in RESPONSE_LATENCIES
+        or _contains_unsafe_dose(feedback + " " + patient_reply + " " + nonverbal_cue)
+    ):
         return fallback
     if action_status == "blocked":
         rating = "concerning"
-    return InteractionEvaluation(rating, feedback, patient_reply, True)
+    return InteractionEvaluation(
+        rating,
+        feedback,
+        patient_reply,
+        True,
+        nonverbal_cue,
+        response_latency,
+    )

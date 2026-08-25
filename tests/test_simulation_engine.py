@@ -10,7 +10,9 @@ from modules.simulation_engine import (
     load_cases,
     match_action_id,
     new_session,
+    record_nursing_note,
     record_unmapped_action,
+    start_session,
     student_export,
 )
 
@@ -29,6 +31,28 @@ class SimulationEngineTests(unittest.TestCase):
         self.session["state"]["pain_score"] = 1
         self.assertEqual(self.case, self.original)
         self.assertEqual(self.case["initial_state"]["pain_score"], 7)
+
+    def test_prebrief_blocks_actions_until_learner_starts(self):
+        session = new_session(
+            self.case,
+            "Test learner",
+            practice_mode="immersive",
+            start_in_prebrief=True,
+        )
+        blocked = apply_action(self.case, session, "check_identity")
+        self.assertFalse(blocked.applied)
+        self.assertEqual(session["phase"], "prebrief")
+        start_session(session)
+        result = apply_action(self.case, session, "check_identity")
+        self.assertTrue(result.applied)
+        self.assertEqual(session["practice_mode"], "immersive")
+
+    def test_case_specific_rubric_is_copied_into_session(self):
+        self.session["educator_rubric"][0]["guidance"] = "Changed for this rehearsal"
+        self.assertNotEqual(
+            self.session["educator_rubric"][0]["guidance"],
+            self.case["educator_rubric"][0]["guidance"],
+        )
 
     def test_precondition_blocks_unsafe_action(self):
         result = apply_action(self.case, self.session, "administer_charted_option")
@@ -56,6 +80,34 @@ class SimulationEngineTests(unittest.TestCase):
         cue_count = len(self.session["state"]["revealed_cues"])
         add_learner_dialogue(self.case, self.session, "Another question", minutes=2)
         self.assertEqual(len(self.session["state"]["revealed_cues"]), cue_count)
+
+    def test_due_event_waits_for_its_authored_condition(self):
+        case = case_by_id(self.cases, "PAT-004")
+        session = new_session(case, "Test learner")
+        for _ in range(3):
+            add_learner_dialogue(case, session, "I am explaining what I am doing.", minutes=2)
+        self.assertNotIn("withdraw_consent", session["resolved_events"])
+        session["state"]["consent_state"] = "accepted"
+        result = apply_action(case, session, "start_agreed_care")
+        self.assertTrue(result.applied)
+        self.assertIn("withdraw_consent", result.fired_events)
+        self.assertEqual(session["state"]["consent_state"], "withdrawn")
+
+    def test_nursing_note_advances_time_and_is_exported(self):
+        result = record_nursing_note(
+            self.case,
+            self.session,
+            "Pain assessed and concern about drowsiness acknowledged.",
+        )
+        self.assertTrue(result.applied)
+        self.assertEqual(self.session["state"]["elapsed_minutes"], 1)
+        exported = student_export(self.case, self.session)
+        self.assertEqual(len(exported["nursing_notes"]), 1)
+
+    def test_patient_experience_values_remain_bounded(self):
+        for _ in range(20):
+            apply_action(self.case, self.session, "assess_pain", minutes=0)
+        self.assertEqual(self.session["state"]["trust"], 100)
 
     def test_free_text_action_matches_authored_action(self):
         result = add_learner_action(
@@ -105,6 +157,7 @@ class SimulationEngineTests(unittest.TestCase):
         self.assertNotIn("facilitator_only", exported)
         self.assertNotIn("state", exported)
         self.assertEqual(exported["status"], "ended")
+        self.assertEqual(exported["practice_mode"], "coached")
         self.assertEqual(exported["formative_feedback"][0]["rating"], "appropriate")
 
 

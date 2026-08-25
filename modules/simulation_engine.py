@@ -19,6 +19,7 @@ from modules.simulation_content import (
 
 
 DATA_PATH = Path(__file__).resolve().parents[1] / "sample_patients" / "patient_cases.json"
+PRACTICE_MODES = {"coached", "immersive"}
 
 
 @dataclass(frozen=True)
@@ -47,9 +48,16 @@ def utc_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def new_session(case: dict[str, Any], learner_name: str = "Learner") -> dict[str, Any]:
+def new_session(
+    case: dict[str, Any],
+    learner_name: str = "Learner",
+    practice_mode: str = "coached",
+    start_in_prebrief: bool = False,
+) -> dict[str, Any]:
     """Create a fresh session without mutating the case definition."""
 
+    if practice_mode not in PRACTICE_MODES:
+        raise ValueError(f"Unknown practice mode: {practice_mode}")
     state = deepcopy(case["initial_state"])
     state.setdefault("elapsed_minutes", 0)
     state.setdefault("revealed_cues", [])
@@ -58,6 +66,8 @@ def new_session(case: dict[str, Any], learner_name: str = "Learner") -> dict[str
         "learner_name": learner_name.strip() or "Learner",
         "started_at": utc_timestamp(),
         "status": "active",
+        "phase": "prebrief" if start_in_prebrief else "active",
+        "practice_mode": practice_mode,
         "state": state,
         "resolved_events": [],
         "transcript": [
@@ -70,8 +80,26 @@ def new_session(case: dict[str, Any], learner_name: str = "Learner") -> dict[str
         ],
         "action_log": [],
         "feedback_log": [],
+        "nursing_notes": [],
+        "latest_patient_expression": {},
+        "educator_rubric": deepcopy(case.get("educator_rubric", [])),
         "reflection": {},
     }
+
+
+def start_session(session: dict[str, Any]) -> None:
+    """Move a prebriefed session into the active encounter."""
+
+    if session.get("status") == "active":
+        session["phase"] = "active"
+
+
+def _interaction_block(session: dict[str, Any]) -> str | None:
+    if session.get("status") != "active":
+        return "This simulation has ended. Restart it to continue."
+    if session.get("phase", "active") != "active":
+        return "Complete the prebrief before beginning the encounter."
+    return None
 
 
 def _conditions_met(state: dict[str, Any], conditions: dict[str, Any]) -> bool:
@@ -86,7 +114,15 @@ def _apply_effects(state: dict[str, Any], effects: dict[str, Any]) -> None:
         else:
             state[key] = value
 
-    for bounded in ("trust", "understanding_level", "overload_level", "pain_score"):
+    for bounded in (
+        "trust",
+        "understanding_level",
+        "overload_level",
+        "fatigue_level",
+        "confusion_level",
+        "anxiety_level",
+        "pain_score",
+    ):
         if bounded in state and isinstance(state[bounded], (int, float)):
             state[bounded] = max(0, min(100 if bounded == "trust" else 10, state[bounded]))
 
@@ -101,20 +137,21 @@ def _resolve_due_events(case: dict[str, Any], session: dict[str, Any]) -> tuple[
         if event_id in resolved or event["at_minute"] > elapsed:
             continue
 
-        if _conditions_met(session["state"], event["when"]):
-            _apply_effects(session["state"], event["effects"])
-            cue = event["visible_cue"]
-            session["state"]["revealed_cues"].append(cue)
-            session["transcript"].append(
-                {
-                    "role": "cue",
-                    "speaker": "Visible change",
-                    "text": cue,
-                    "minute": elapsed,
-                }
-            )
-            fired.append(event_id)
+        if not _conditions_met(session["state"], event["when"]):
+            continue
 
+        _apply_effects(session["state"], event["effects"])
+        cue = event["visible_cue"]
+        session["state"]["revealed_cues"].append(cue)
+        session["transcript"].append(
+            {
+                "role": "cue",
+                "speaker": "Visible change",
+                "text": cue,
+                "minute": elapsed,
+            }
+        )
+        fired.append(event_id)
         session["resolved_events"].append(event_id)
         resolved.add(event_id)
 
@@ -168,8 +205,8 @@ def apply_action(
 ) -> ActionResult:
     """Apply one authored action and then resolve time-based events."""
 
-    if session.get("status") != "active":
-        return ActionResult(False, "This simulation has ended. Restart it to continue.")
+    if blocked := _interaction_block(session):
+        return ActionResult(False, blocked)
 
     action = _find_action(case, action_id)
     if not _conditions_met(session["state"], action["preconditions"]):
@@ -220,8 +257,8 @@ def add_learner_action(
     clean = " ".join(text.split())[:600]
     if not clean:
         return ActionResult(False, "Describe one nursing action first.")
-    if session.get("status") != "active":
-        return ActionResult(False, "This simulation has ended. Restart it to continue.")
+    if blocked := _interaction_block(session):
+        return ActionResult(False, blocked)
 
     action_id = match_action_id(case, clean)
     if action_id is not None:
@@ -238,8 +275,8 @@ def record_unmapped_action(
     clean = " ".join(text.split())[:600]
     if not clean:
         return ActionResult(False, "Describe one nursing action first.")
-    if session.get("status") != "active":
-        return ActionResult(False, "This simulation has ended. Restart it to continue.")
+    if blocked := _interaction_block(session):
+        return ActionResult(False, blocked)
     session["state"]["elapsed_minutes"] += max(0, minutes)
     session["transcript"].append(
         {
@@ -281,8 +318,8 @@ def add_learner_dialogue(
     clean = " ".join(text.split())[:600]
     if not clean:
         return ActionResult(False, "Enter something to say first.")
-    if session.get("status") != "active":
-        return ActionResult(False, "This simulation has ended. Restart it to continue.")
+    if blocked := _interaction_block(session):
+        return ActionResult(False, blocked)
 
     prior_messages = sum(1 for item in session["transcript"] if item["role"] == "learner_dialogue")
     session["state"]["elapsed_minutes"] += max(0, minutes)
@@ -315,8 +352,8 @@ def record_learner_dialogue(
     clean = " ".join(text.split())[:600]
     if not clean:
         return ActionResult(False, "Enter something to say first.")
-    if session.get("status") != "active":
-        return ActionResult(False, "This simulation has ended. Restart it to continue.")
+    if blocked := _interaction_block(session):
+        return ActionResult(False, blocked)
 
     session["state"]["elapsed_minutes"] += max(0, minutes)
     session["transcript"].append(
@@ -331,22 +368,71 @@ def record_learner_dialogue(
     return ActionResult(True, "Dialogue recorded.", (), fired)
 
 
+def record_nursing_note(
+    case: dict[str, Any], session: dict[str, Any], text: str, minutes: int = 1
+) -> ActionResult:
+    """Record learner documentation and allow authored time events to progress."""
+
+    clean = " ".join(text.split())[:1000]
+    if not clean:
+        return ActionResult(False, "Write a short nursing note first.")
+    if blocked := _interaction_block(session):
+        return ActionResult(False, blocked)
+
+    session["state"]["elapsed_minutes"] += max(0, minutes)
+    entry = {
+        "minute": session["state"]["elapsed_minutes"],
+        "author": session["learner_name"],
+        "text": clean,
+    }
+    session.setdefault("nursing_notes", []).append(entry)
+    session["transcript"].append(
+        {
+            "role": "documentation",
+            "speaker": session["learner_name"],
+            "text": clean,
+            "minute": session["state"]["elapsed_minutes"],
+        }
+    )
+    fired = _resolve_due_events(case, session)
+    return ActionResult(True, "Nursing note saved.", (), fired)
+
+
 def append_patient_response(
-    case: dict[str, Any], session: dict[str, Any], text: str
+    case: dict[str, Any],
+    session: dict[str, Any],
+    text: str,
+    nonverbal_cue: str = "",
+    response_latency: str = "immediate",
 ) -> bool:
     """Append patient wording without changing deterministic state."""
 
     clean = " ".join(text.split())[:600]
     if not clean:
         return False
+    cue = " ".join(nonverbal_cue.split())[:300]
+    if cue:
+        session["transcript"].append(
+            {
+                "role": "nonverbal",
+                "speaker": "Observed behaviour",
+                "text": cue,
+                "minute": session["state"]["elapsed_minutes"],
+            }
+        )
     session["transcript"].append(
         {
             "role": "patient",
             "speaker": case["patient"]["display_name"],
             "text": clean,
             "minute": session["state"]["elapsed_minutes"],
+            "response_latency": response_latency,
         }
     )
+    session["latest_patient_expression"] = {
+        "nonverbal_cue": cue,
+        "response_latency": response_latency,
+    }
     return True
 
 
@@ -374,6 +460,7 @@ def replace_latest_patient_response(session: dict[str, Any], text: str) -> bool:
 
 def end_session(session: dict[str, Any]) -> None:
     session["status"] = "ended"
+    session["phase"] = "debrief"
     session["ended_at"] = utc_timestamp()
 
 
@@ -385,12 +472,14 @@ def student_export(case: dict[str, Any], session: dict[str, Any]) -> dict[str, A
         "case_title": case["title"],
         "synthetic_data_notice": case["synthetic_data_notice"],
         "learner_name": session["learner_name"],
+        "practice_mode": session.get("practice_mode", "coached"),
         "status": session["status"],
         "started_at": session["started_at"],
         "ended_at": session.get("ended_at"),
         "elapsed_minutes": session["state"]["elapsed_minutes"],
         "transcript": deepcopy(session["transcript"]),
         "actions": deepcopy(session["action_log"]),
+        "nursing_notes": deepcopy(session.get("nursing_notes", [])),
         "formative_feedback": deepcopy(session.get("feedback_log", [])),
         "reflection": deepcopy(session.get("reflection", {})),
     }

@@ -25,8 +25,10 @@ from modules.simulation_engine import (
     load_cases,
     new_session,
     record_learner_dialogue,
+    record_nursing_note,
     record_unmapped_action,
     remove_latest_patient_response,
+    start_session,
     student_export,
 )
 
@@ -70,6 +72,9 @@ def apply_styles() -> None:
           .transcript.patient { border-left-color:#0f766e; }
           .transcript.learner { border-left-color:#3157d5; }
           .transcript.cue { border-left-color:#d97706; background:#fffaf0; padding:.65rem 1rem; border-radius:0 8px 8px 0; }
+          .transcript.nonverbal { border-left-color:#8b5cf6; color:#51416f; font-style:italic; }
+          .transcript.documentation { border-left-color:#64748b; background:#f8fafc; padding:.65rem 1rem; border-radius:0 8px 8px 0; }
+          .mode-card { border:1px solid var(--line); border-radius:14px; padding:1rem; background:#f8fbfa; margin:.5rem 0 1rem; }
           .minute { color:var(--muted); font-size:.78rem; font-weight:600; text-transform:uppercase; }
           div[data-testid="stMetric"] { background:white; border:1px solid var(--line); padding:1rem; border-radius:14px; }
         </style>
@@ -82,9 +87,9 @@ def safety_banner() -> None:
     st.markdown(
         """
         <div class="safety-banner"><strong>Prototype:</strong> entirely fictional cases and
-        deterministic clinical state. AI may phrase patient dialogue but cannot change clinical
-        facts. This app is not clinical guidance, a medicines reference or a competence-assessment
-        system.</div>
+        deterministic clinical state. AI may interpret an interaction and phrase the patient's
+        response, but cannot change clinical facts. This app is not clinical guidance, a medicines
+        reference or a competence-assessment system.</div>
         """,
         unsafe_allow_html=True,
     )
@@ -130,8 +135,8 @@ def render_home() -> None:
         ("Choose", "Rehearse", "Debrief"),
         (
             "Select one focused patient case and review the learner brief.",
-            "Use authored actions, speak to the patient and notice visible changes.",
-            "End the scenario and reflect with a prepared facilitator.",
+            "Describe what you would do and say, then notice the patient's words and behaviour.",
+            "Review the encounter using a structured, facilitator-supported debrief.",
         ),
     ):
         with column:
@@ -186,12 +191,51 @@ def render_library() -> None:
             st.markdown(f"- {platform}")
 
 
-def ensure_session(case: dict, learner_name: str) -> dict:
+def ensure_session(case: dict, learner_name: str, practice_mode: str) -> dict:
     session = st.session_state.get("simulation")
-    if session is None or session.get("case_id") != case["case_id"]:
-        session = new_session(case, learner_name)
+    if (
+        session is None
+        or session.get("case_id") != case["case_id"]
+        or session.get("practice_mode", "coached") != practice_mode
+    ):
+        session = new_session(
+            case,
+            learner_name,
+            practice_mode=practice_mode,
+            start_in_prebrief=True,
+        )
         st.session_state.simulation = session
     return session
+
+
+def render_prebrief(case: dict, session: dict) -> None:
+    prebrief = case["prebrief"]
+    mode_name = "Coached practice" if session["practice_mode"] == "coached" else "Immersive practice"
+    st.markdown(f"### Prebrief · {mode_name}")
+    st.markdown(f'<div class="mode-card"><strong>Your role</strong><br>{escape(prebrief["role"])}</div>', unsafe_allow_html=True)
+    st.write(prebrief["orientation"])
+    left, middle, right = st.columns(3)
+    with left:
+        st.markdown("**Available resources**")
+        for item in prebrief["resources"]:
+            st.markdown(f"- {item}")
+    with middle:
+        st.markdown("**Fidelity limits**")
+        for item in prebrief["limitations"]:
+            st.markdown(f"- {item}")
+    with right:
+        st.markdown("**Learning agreement**")
+        for item in prebrief["ground_rules"]:
+            st.markdown(f"- {item}")
+    st.info(
+        "In immersive practice, interaction scores remain hidden until the simulation ends. "
+        "The patient response and visible scenario changes remain available."
+        if session["practice_mode"] == "immersive"
+        else "In coached practice, formative feedback appears after each interaction."
+    )
+    if st.button("I am ready — begin simulation", type="primary", use_container_width=True):
+        start_session(session)
+        st.rerun()
 
 
 def render_transcript(session: dict) -> None:
@@ -202,10 +246,14 @@ def render_transcript(session: dict) -> None:
             css_role = "learner"
         elif item["role"] == "cue":
             css_role = "cue"
+        elif item["role"] in {"nonverbal", "documentation"}:
+            css_role = item["role"]
+        latency = str(item.get("response_latency", "")).replace("_", " ")
+        latency_label = f" · {escape(latency)}" if latency and latency != "immediate" else ""
         st.markdown(
             f"""
             <div class="transcript {css_role}">
-              <div class="minute">Minute {item['minute']} · {escape(str(item['speaker']))}</div>
+              <div class="minute">Minute {item['minute']} · {escape(str(item['speaker']))}{latency_label}</div>
               <div>{escape(str(item['text']))}</div>
             </div>
             """,
@@ -229,21 +277,78 @@ def render_state(case: dict, session: dict, facilitator_mode: bool) -> None:
     metric_cols = st.columns(3)
     metric_cols[0].metric("Scenario time", f"{state['elapsed_minutes']} min")
     metric_cols[1].metric("Actions recorded", len(session["action_log"]))
-    metric_cols[2].metric("Status", session["status"].title())
+    metric_cols[2].metric("Mode", session.get("practice_mode", "coached").title())
 
-    with st.expander("Patient brief and communication needs", expanded=False):
+    patient_tab, handover_tab, observations_tab, records_tab, environment_tab, notes_tab = st.tabs(
+        ["Patient", "Handover", "Observations", "Records", "Environment", "Notes"]
+    )
+    with patient_tab:
         st.write(case["clinical"]["presenting_context"])
+        st.markdown("**Communication needs**")
         for need in patient["communication_needs"]:
             st.markdown(f"- {need}")
-
-    with st.expander("Visible cues", expanded=True):
-        cues = [*case["clinical"]["visible_at_start"], *state.get("revealed_cues", [])]
+        st.markdown("**What you can see now**")
+        cues = [
+            *case["clinical"]["visible_at_start"],
+            *state.get("revealed_cues", []),
+        ]
         for cue in cues:
             st.markdown(f"- {cue}")
 
-    if state.get("observations_measured"):
-        with st.expander("Measured observations", expanded=True):
+    with handover_tab:
+        st.write(case["clinical_workspace"]["handover"])
+
+    with observations_tab:
+        if state.get("observations_measured"):
             st.json(case["clinical"]["baseline_observations"])
+        elif case["clinical"].get("baseline_observations"):
+            st.info(
+                "No observation set has been revealed in this encounter. Describe what you would do in the action box."
+            )
+        else:
+            st.caption("No observation chart is needed for this focused conversation scenario.")
+
+    with records_tab:
+        records = case["clinical_workspace"].get("record_access", [])
+        if not records:
+            st.caption("No additional record is required for this focused scenario.")
+        for record in records:
+            if state.get(record["state_key"]):
+                st.markdown(f"**{record['title']}**")
+                st.write(record["content"])
+            else:
+                st.markdown(f"**{record['title']}**")
+                st.caption("Not yet accessed in the encounter.")
+
+    with environment_tab:
+        st.markdown("**Current environment**")
+        for item in case["clinical_workspace"]["environment"]:
+            st.markdown(f"- {item}")
+        st.markdown("**Resources represented in this simulation**")
+        for item in case["clinical_workspace"]["available_resources"]:
+            st.markdown(f"- {item}")
+
+    with notes_tab:
+        for note in session.get("nursing_notes", []):
+            st.caption(f"Minute {note['minute']} · {note['author']}")
+            st.write(note["text"])
+        with st.form(f"nursing_note_{case['case_id']}", clear_on_submit=True):
+            note_text = st.text_area(
+                "Add a nursing note",
+                placeholder="Document what is relevant, concise and factual…",
+                disabled=session["status"] == "ended",
+            )
+            save_note = st.form_submit_button(
+                "Save note",
+                disabled=session["status"] == "ended",
+                use_container_width=True,
+            )
+        if save_note:
+            result = record_nursing_note(case, session, note_text)
+            if result.applied:
+                st.rerun()
+            else:
+                st.warning(result.message)
 
     if facilitator_mode:
         with st.expander("Facilitator-only state", expanded=False):
@@ -275,6 +380,9 @@ def render_latest_feedback(session: dict) -> None:
             5: "Strongly appropriate",
         }
         st.markdown(f"**Proposed action suitability: {score}/5 — {score_labels[score]}**")
+    relevance = latest.get("relevance_category")
+    if relevance:
+        st.caption(f"Relevance to this moment: {relevance.replace('_', ' ').title()}")
     if rating == "appropriate":
         st.success(f"**Combined interaction: {labels[rating]}**  \n{latest['feedback']}")
     elif rating == "concerning":
@@ -290,27 +398,67 @@ def render_latest_feedback(session: dict) -> None:
     with st.expander("How action suitability is judged", expanded=False):
         for criterion in ASSESSMENT_CRITERIA:
             st.markdown(f"- {criterion}")
+        st.markdown("**Case-specific educator criteria**")
+        for criterion in session.get("educator_rubric", []):
+            st.markdown(f"- **{criterion['label']}:** {criterion['guidance']}")
 
 
-def render_simulation() -> None:
+def render_feedback_history(session: dict) -> None:
+    feedback_log = session.get("feedback_log", [])
+    if not feedback_log:
+        st.info("No formative interaction feedback was recorded in this encounter.")
+        return
+    for index, item in enumerate(feedback_log, start=1):
+        with st.expander(
+            f"Interaction {index} · minute {item.get('minute', 0)} · "
+            f"{item.get('rating', 'unclear').title()}",
+            expanded=index == len(feedback_log),
+        ):
+            if item.get("action"):
+                st.markdown(f"**Action:** {item['action']}")
+            if item.get("dialogue"):
+                st.markdown(f"**Words:** {item['dialogue']}")
+            score = item.get("suitability_score")
+            relevance = item.get("relevance_category")
+            if score is not None:
+                st.write(
+                    f"Suitability {score}/5"
+                    + (f" · {relevance.replace('_', ' ').title()} relevance" if relevance else "")
+                )
+            st.write(item.get("feedback", "No feedback text was recorded."))
+
+
+def render_simulation(facilitator_mode: bool) -> None:
     st.title("Run simulation")
     safety_banner()
-    setup_left, setup_right = st.columns([2, 1])
+    setup_left, setup_middle, setup_right = st.columns([2, 1.25, 1])
     with setup_left:
         case = case_selector("simulation_case")
+    with setup_middle:
+        practice_mode_label = st.radio(
+            "Practice style",
+            ["Coached", "Immersive"],
+            horizontal=True,
+            help="Coached shows feedback after each turn; Immersive holds it for debrief.",
+        )
     with setup_right:
         learner_name = st.text_input("Learner name", value="Learner")
 
-    facilitator_mode = st.sidebar.toggle(
-        "Facilitator mode",
-        value=False,
-        help="Shows authored facilitator notes and internal deterministic state.",
-    )
-    session = ensure_session(case, learner_name)
+    practice_mode = practice_mode_label.casefold()
+    session = ensure_session(case, learner_name, practice_mode)
+
+    if session.get("phase") == "prebrief":
+        render_prebrief(case, session)
+        return
 
     reset_col, end_col, _ = st.columns([1, 1, 3])
     if reset_col.button("Restart case", use_container_width=True):
-        st.session_state.simulation = new_session(case, learner_name)
+        st.session_state.simulation = new_session(
+            case,
+            learner_name,
+            practice_mode=practice_mode,
+            start_in_prebrief=True,
+        )
         st.rerun()
     if end_col.button(
         "End simulation",
@@ -360,6 +508,7 @@ def render_simulation() -> None:
                 action_status = "not_provided"
                 matched_action_label = None
                 action_assessment = None
+                latest_action = None
 
                 if action_clean:
                     if AI_READY:
@@ -429,7 +578,13 @@ def render_simulation() -> None:
                 else:
                     evaluation = evaluate()
 
-                append_patient_response(case, session, evaluation.patient_reply)
+                append_patient_response(
+                    case,
+                    session,
+                    evaluation.patient_reply,
+                    nonverbal_cue=evaluation.nonverbal_cue,
+                    response_latency=evaluation.response_latency,
+                )
                 fallback_score = {
                     "applied": 4,
                     "blocked": 2,
@@ -452,6 +607,13 @@ def render_simulation() -> None:
                             if action_assessment
                             else None
                         ),
+                        "relevance_category": (
+                            action_assessment.relevance_category
+                            if action_assessment
+                            else "direct"
+                            if action_status == "applied"
+                            else "unclear"
+                        ),
                         "mapping_confidence": (
                             action_assessment.confidence if action_assessment else None
                         ),
@@ -459,7 +621,7 @@ def render_simulation() -> None:
                             action_assessment.matched_action_id
                             if action_assessment
                             else latest_action.get("action_id")
-                            if action_clean and session["action_log"]
+                            if latest_action
                             else None
                         ),
                         "rating": evaluation.rating,
@@ -468,11 +630,18 @@ def render_simulation() -> None:
                         "action_assessment_generated": (
                             action_assessment.generated if action_assessment else False
                         ),
+                        "patient_nonverbal_cue": evaluation.nonverbal_cue,
+                        "response_latency": evaluation.response_latency,
                     }
                 )
                 st.rerun()
 
-        render_latest_feedback(session)
+        if session.get("practice_mode") == "coached":
+            render_latest_feedback(session)
+        elif session.get("feedback_log"):
+            st.caption(
+                "Immersive practice is active: interaction scores and coaching are being held for debrief."
+            )
 
     st.divider()
     render_transcript(session)
@@ -480,7 +649,41 @@ def render_simulation() -> None:
         st.success("Simulation ended. Open Debrief from the navigation to reflect and export.")
 
 
-def render_debrief() -> None:
+def render_educator_rubric(session: dict) -> None:
+    st.markdown("### Editable educator criteria")
+    st.caption(
+        "These criteria guide AI-supported interaction feedback and facilitator discussion. "
+        "They do not produce an automatic competence decision."
+    )
+    rubric = session.setdefault("educator_rubric", [])
+    for index, criterion in enumerate(rubric):
+        with st.expander(criterion["label"], expanded=False):
+            criterion["label"] = st.text_input(
+                "Criterion label",
+                value=criterion["label"],
+                key=f"rubric_label_{session['case_id']}_{index}",
+            )
+            criterion["guidance"] = st.text_area(
+                "Case-specific guidance",
+                value=criterion["guidance"],
+                key=f"rubric_guidance_{session['case_id']}_{index}",
+            )
+            criterion["facilitator_rating"] = st.selectbox(
+                "Facilitator observation",
+                ["Not assessed", "Observed", "Partly observed", "Not yet observed"],
+                index=["Not assessed", "Observed", "Partly observed", "Not yet observed"].index(
+                    criterion.get("facilitator_rating", "Not assessed")
+                ),
+                key=f"rubric_rating_{session['case_id']}_{index}",
+            )
+            criterion["facilitator_note"] = st.text_area(
+                "Facilitator evidence note",
+                value=criterion.get("facilitator_note", ""),
+                key=f"rubric_note_{session['case_id']}_{index}",
+            )
+
+
+def render_debrief(facilitator_mode: bool) -> None:
     st.title("Structured debrief")
     safety_banner()
     session = st.session_state.get("simulation")
@@ -497,12 +700,41 @@ def render_debrief() -> None:
     cols[1].metric("Actions", len(session["action_log"]))
     cols[2].metric("Visible changes", len(session["state"].get("revealed_cues", [])))
 
-    st.markdown("### Learner reflection")
+    if session["status"] == "ended":
+        st.markdown("### Formative interaction review")
+        render_feedback_history(session)
+    elif session.get("practice_mode") == "immersive":
+        st.info("Immersive-mode feedback remains hidden until the simulation is ended.")
+
+    st.markdown("### Reactions")
+    reaction_prompt = "How did the encounter feel, and what moment stays with you?"
+    reaction_key = f"reflection_{case['case_id']}_reaction"
+    reaction = st.text_area(
+        reaction_prompt,
+        value=session.get("reflection", {}).get(reaction_prompt, ""),
+        key=reaction_key,
+    )
+    session.setdefault("reflection", {})[reaction_prompt] = reaction
+
+    st.markdown("### Analysis")
     for index, prompt in enumerate(case["debrief"]["prompts"]):
         key = f"reflection_{case['case_id']}_{index}"
         saved = session.get("reflection", {}).get(prompt, "")
         answer = st.text_area(prompt, value=saved, key=key)
         session.setdefault("reflection", {})[prompt] = answer
+
+    st.markdown("### Summary and transfer")
+    transfer_prompt = "What is one specific thing you would carry into supervised practice?"
+    transfer_key = f"reflection_{case['case_id']}_transfer"
+    transfer = st.text_area(
+        transfer_prompt,
+        value=session.get("reflection", {}).get(transfer_prompt, ""),
+        key=transfer_key,
+    )
+    session.setdefault("reflection", {})[transfer_prompt] = transfer
+
+    if facilitator_mode:
+        render_educator_rubric(session)
 
     with st.expander("Review transcript", expanded=False):
         render_transcript(session)
@@ -528,9 +760,12 @@ def render_about() -> None:
 
         - Uses four entirely fictional adult-nursing cases.
         - Applies clinical and consent changes through authored rules.
-        - Optionally uses constrained AI to phrase synthetic-patient dialogue.
+        - Offers coached practice or immersive practice with delayed debrief feedback.
+        - Includes prebriefing, a small clinical workspace and learner documentation.
+        - Optionally uses constrained AI for natural dialogue and formative interpretation.
         - Falls back to authored dialogue if an API is unavailable.
-        - Supports replay, visible time changes, debrief and learner-safe export.
+        - Uses bounded patient-experience state, non-verbal cues and visible time changes.
+        - Supports replay, structured debrief, editable educator criteria and learner-safe export.
 
         ### What it does not do
 
@@ -559,8 +794,13 @@ with st.sidebar:
         ["Home", "Patient library", "Run simulation", "Debrief", "Safety & scope"],
         label_visibility="collapsed",
     )
+    FACILITATOR_MODE = st.toggle(
+        "Facilitator mode",
+        value=False,
+        help="Shows internal authored state and editable case-specific educator criteria.",
+    )
     st.divider()
-    with st.expander("AI dialogue settings", expanded=False):
+    with st.expander("AI interaction settings", expanded=False):
         ai_client.render_provider_options()
         AI_READY, ai_status = ai_client.configure_selected_provider()
         st.caption(ai_status if AI_READY else f"Authored fallback active. {ai_status}")
@@ -572,8 +812,8 @@ if page == "Home":
 elif page == "Patient library":
     render_library()
 elif page == "Run simulation":
-    render_simulation()
+    render_simulation(FACILITATOR_MODE)
 elif page == "Debrief":
-    render_debrief()
+    render_debrief(FACILITATOR_MODE)
 else:
     render_about()
