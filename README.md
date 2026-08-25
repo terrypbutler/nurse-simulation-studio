@@ -4,8 +4,9 @@ A first Streamlit prototype for supervised nursing-education rehearsal using
 entirely fictional adult patients.
 
 Clinical and consent state changes are deterministic and educator-authored.
-The prototype does not call an AI model, invent physiology, provide medication
-doses or make competence decisions.
+An optional Gemini or OpenAI model can phrase synthetic-patient replies, but it
+cannot change simulation state, provide medication doses or make competence
+decisions. Authored dialogue remains the automatic fallback.
 
 ## Run locally
 
@@ -16,6 +17,13 @@ py -m streamlit run app.py
 
 Then open the local address printed by Streamlit, normally
 `http://localhost:8501`.
+
+## Optional AI dialogue
+
+Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`, add a
+`GEMINI_API_KEY`, an `OPENAI_API_KEY`, or both, and choose the provider in the
+sidebar. Never commit the real secrets file. Without a configured key, the app
+continues to use its authored replies.
 
 ## Test
 
@@ -30,7 +38,7 @@ py .\sample_patients\validate_cases.py
 - Patient library and learner briefs
 - Authored nursing actions with prerequisite checks
 - Deterministic time-triggered changes
-- Authored patient dialogue and safe free-text fallback replies
+- Optional AI-phrased patient dialogue with safe authored fallback replies
 - Restartable sessions
 - Facilitator-only view
 - Structured debrief

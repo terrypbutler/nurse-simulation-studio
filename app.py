@@ -7,6 +7,8 @@ import json
 
 import streamlit as st
 
+from modules import ai_client
+from modules.patient_dialogue import generate_patient_reply
 from modules.simulation_engine import (
     add_learner_action,
     add_learner_dialogue,
@@ -14,6 +16,7 @@ from modules.simulation_engine import (
     end_session,
     load_cases,
     new_session,
+    replace_latest_patient_response,
     student_export,
 )
 
@@ -69,8 +72,9 @@ def safety_banner() -> None:
     st.markdown(
         """
         <div class="safety-banner"><strong>Prototype:</strong> entirely fictional cases and
-        authored responses. This app is not clinical guidance, a medicines reference or a
-        competence-assessment system.</div>
+        deterministic clinical state. AI may phrase patient dialogue but cannot change clinical
+        facts. This app is not clinical guidance, a medicines reference or a competence-assessment
+        system.</div>
         """,
         unsafe_allow_html=True,
     )
@@ -214,7 +218,7 @@ def render_state(case: dict, session: dict, facilitator_mode: bool) -> None:
     )
     metric_cols = st.columns(3)
     metric_cols[0].metric("Scenario time", f"{state['elapsed_minutes']} min")
-    metric_cols[1].metric("Actions completed", len(session["action_log"]))
+    metric_cols[1].metric("Actions recorded", len(session["action_log"]))
     metric_cols[2].metric("Status", session["status"].title())
 
     with st.expander("Patient brief and communication needs", expanded=False):
@@ -292,6 +296,16 @@ def render_simulation() -> None:
         if action_submitted:
             result = add_learner_action(case, session, action_text)
             if result.applied:
+                latest_action = session["action_log"][-1] if session["action_log"] else {}
+                if AI_READY and latest_action.get("applied"):
+                    with st.spinner("The patient is responding…"):
+                        reply = generate_patient_reply(
+                            case,
+                            session,
+                            action_text,
+                            canonical_reply=result.message,
+                        )
+                    replace_latest_patient_response(session, reply.text)
                 st.rerun()
             else:
                 st.warning(result.message)
@@ -299,7 +313,8 @@ def render_simulation() -> None:
         st.divider()
         st.subheader("Speak to the patient")
         st.caption(
-            "Free text receives an authored neutral reply and cannot change clinical facts."
+            "AI phrases the reply when configured; an authored fallback is always available. "
+            "Dialogue cannot change clinical facts."
         )
         with st.form("dialogue_form", clear_on_submit=True):
             dialogue = st.text_area(
@@ -313,7 +328,15 @@ def render_simulation() -> None:
                 disabled=session["status"] == "ended",
             )
         if submitted:
-            result = add_learner_dialogue(case, session, dialogue)
+            generated_reply = None
+            if AI_READY and dialogue.strip() and session["status"] == "active":
+                with st.spinner("The patient is responding…"):
+                    generated_reply = generate_patient_reply(
+                        case, session, dialogue
+                    ).text
+            result = add_learner_dialogue(
+                case, session, dialogue, reply_text=generated_reply
+            )
             if result.applied:
                 st.rerun()
             else:
@@ -373,7 +396,8 @@ def render_about() -> None:
 
         - Uses four entirely fictional adult-nursing cases.
         - Applies clinical and consent changes through authored rules.
-        - Uses authored dialogue rather than generative AI.
+        - Optionally uses constrained AI to phrase synthetic-patient dialogue.
+        - Falls back to authored dialogue if an API is unavailable.
         - Supports replay, visible time changes, debrief and learner-safe export.
 
         ### What it does not do
@@ -382,6 +406,7 @@ def render_about() -> None:
         - Calculate a clinical score or recommend treatment.
         - Replace supervision, assessment or real practice learning.
         - Determine learner competence.
+        - Allow AI dialogue to change observations, consent or treatment effects.
 
         ### Before educational deployment
 
@@ -402,6 +427,11 @@ with st.sidebar:
         ["Home", "Patient library", "Run simulation", "Debrief", "Safety & scope"],
         label_visibility="collapsed",
     )
+    st.divider()
+    with st.expander("AI dialogue settings", expanded=False):
+        ai_client.render_provider_options()
+        AI_READY, ai_status = ai_client.configure_selected_provider()
+        st.caption(ai_status if AI_READY else f"Authored fallback active. {ai_status}")
     st.divider()
     st.caption("Entirely fictional training data. No real patient records.")
 

@@ -256,7 +256,11 @@ def add_learner_action(
 
 
 def add_learner_dialogue(
-    case: dict[str, Any], session: dict[str, Any], text: str, minutes: int = 1
+    case: dict[str, Any],
+    session: dict[str, Any],
+    text: str,
+    minutes: int = 1,
+    reply_text: str | None = None,
 ) -> ActionResult:
     """Add free text and an authored neutral reply; do not change clinical facts."""
 
@@ -276,7 +280,7 @@ def add_learner_dialogue(
             "minute": session["state"]["elapsed_minutes"],
         }
     )
-    reply = free_text_response(case["case_id"], prior_messages)
+    reply = reply_text or free_text_response(case["case_id"], prior_messages)
     session["transcript"].append(
         {
             "role": "patient",
@@ -287,6 +291,19 @@ def add_learner_dialogue(
     )
     fired = _resolve_due_events(case, session)
     return ActionResult(True, reply, (), fired)
+
+
+def replace_latest_patient_response(session: dict[str, Any], text: str) -> bool:
+    """Replace only the latest patient wording; never alter clinical state."""
+
+    clean = " ".join(text.split())[:600]
+    if not clean:
+        return False
+    for item in reversed(session["transcript"]):
+        if item["role"] == "patient":
+            item["text"] = clean
+            return True
+    return False
 
 
 def end_session(session: dict[str, Any]) -> None:
