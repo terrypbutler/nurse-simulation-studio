@@ -1,0 +1,668 @@
+{
+  "schema_version": "0.1.0",
+  "cases": [
+    {
+      "case_id": "PAT-001",
+      "title": "Postoperative pain and treatment choice",
+      "synthetic_data_notice": "Entirely fictional training case",
+      "field": "adult nursing",
+      "setting": "orthopaedic ward",
+      "complexity": "introductory",
+      "estimated_duration_minutes": 15,
+      "patient": {
+        "display_name": "Eleanor Shaw",
+        "age": 67,
+        "pronouns": "she/her",
+        "preferred_address": "Mrs Shaw",
+        "communication_needs": ["Uses reading glasses for written information"],
+        "explicit_preferences": [
+          "Wants to remain alert when her daughter visits",
+          "Would like options explained before deciding"
+        ],
+        "dialogue_style": "Polite, concise and initially cautious about strong pain relief"
+      },
+      "learning": {
+        "outcomes": [
+          "Undertake a person-centred pain assessment",
+          "Check the simulated prescription and allergy record before offering treatment",
+          "Explain options in understandable language and respect refusal",
+          "Reassess and communicate unresolved pain appropriately"
+        ],
+        "nmc_platforms": [
+          "Assessing needs and planning care",
+          "Providing and evaluating care",
+          "Improving safety and quality of care"
+        ]
+      },
+      "clinical": {
+        "presenting_context": "Day one after an uncomplicated simulated hip replacement",
+        "visible_at_start": [
+          "Lying still with a tense expression",
+          "Protects the operated side when moving",
+          "Able to speak in full sentences"
+        ],
+        "allergy_record": "No known medicine allergies recorded on the simulated chart",
+        "prescribed_items": [
+          {
+            "order_id": "SIM-PRN-ANALGESIA-01",
+            "display_text": "Educator-approved postoperative analgesia option",
+            "dose_source": "Read only from the simulated prescription chart"
+          }
+        ],
+        "baseline_observations": {
+          "respiratory_rate_per_min": 16,
+          "oxygen_saturation_percent": 97,
+          "oxygen_delivery": "room air",
+          "heart_rate_per_min": 88,
+          "blood_pressure_mmHg": "132/78",
+          "temperature_celsius": 36.8,
+          "alertness": "alert"
+        }
+      },
+      "initial_state": {
+        "elapsed_minutes": 0,
+        "identity_checked": false,
+        "allergies_checked": false,
+        "prescription_checked": false,
+        "pain_score_known": false,
+        "pain_score": 7,
+        "options_explained": false,
+        "consent_state": "not_asked",
+        "analgesia_administered": false,
+        "reassessed": false,
+        "trust": 45,
+        "revealed_cues": []
+      },
+      "time_events": [
+        {
+          "event_id": "pain_unaddressed",
+          "at_minute": 8,
+          "when": { "analgesia_administered": false },
+          "effects": { "pain_score": 8, "trust_delta": -5 },
+          "visible_cue": "Mrs Shaw shifts, grimaces and grips the bed sheet."
+        },
+        {
+          "event_id": "expected_reassessment",
+          "at_minute": 12,
+          "when": { "analgesia_administered": true, "reassessed": false },
+          "effects": {},
+          "visible_cue": "Mrs Shaw looks towards the nurse as if expecting a review."
+        }
+      ],
+      "allowed_actions": [
+        {
+          "action_id": "check_identity",
+          "label": "Use two identifiers against the simulated record",
+          "preconditions": {},
+          "effects": { "identity_checked": true },
+          "reveals": []
+        },
+        {
+          "action_id": "assess_pain",
+          "label": "Ask about site, severity, character and effect of pain",
+          "preconditions": {},
+          "effects": { "pain_score_known": true, "trust_delta": 5 },
+          "reveals": ["Current pain score is 7 out of 10", "Pain is worse on movement"]
+        },
+        {
+          "action_id": "check_allergies_and_prescription",
+          "label": "Check the simulated allergy and prescription records",
+          "preconditions": { "identity_checked": true },
+          "effects": { "allergies_checked": true, "prescription_checked": true },
+          "reveals": ["SIM-PRN-ANALGESIA-01 is available on the simulated chart"],
+          "blocked_message": "The record cannot be safely matched until identity is checked."
+        },
+        {
+          "action_id": "explain_analgesia",
+          "label": "Explain the charted option and invite questions",
+          "preconditions": { "prescription_checked": true, "allergies_checked": true },
+          "effects": { "options_explained": true, "trust_delta": 10 },
+          "reveals": ["Mrs Shaw is worried that pain relief will make her too sleepy"],
+          "blocked_message": "The option must be verified against the simulated chart first."
+        },
+        {
+          "action_id": "seek_consent",
+          "label": "Ask whether Mrs Shaw wishes to accept the charted option",
+          "preconditions": { "options_explained": true },
+          "effects": { "consent_state": "accepted" },
+          "reveals": ["Mrs Shaw agrees after her concern has been addressed"],
+          "blocked_message": "Mrs Shaw asks for an explanation before deciding."
+        },
+        {
+          "action_id": "administer_charted_option",
+          "label": "Record administration of the educator-approved charted option",
+          "preconditions": {
+            "identity_checked": true,
+            "allergies_checked": true,
+            "prescription_checked": true,
+            "consent_state": "accepted"
+          },
+          "effects": { "analgesia_administered": true },
+          "reveals": [],
+          "blocked_message": "Identity, allergy, prescription and consent checks must all be complete."
+        },
+        {
+          "action_id": "reassess_pain",
+          "label": "Reassess comfort and pain after the authored interval",
+          "preconditions": { "analgesia_administered": true },
+          "effects": { "pain_score": 4, "reassessed": true },
+          "reveals": ["Authored reassessment pain score is 4 out of 10"],
+          "blocked_message": "No simulated analgesia has been administered in this pathway."
+        }
+      ],
+      "ai_contract": {
+        "allowed_context": [
+          "Patient communication profile",
+          "Currently revealed cues",
+          "Current pain score only after it is revealed",
+          "Consent state",
+          "Student's exact words"
+        ],
+        "may_generate": ["Patient dialogue", "Emotion", "Brief visible behaviour", "Response latency"],
+        "must_not_generate": [
+          "Observations",
+          "Medicine names or doses",
+          "New allergies",
+          "Diagnosis or diagnoses",
+          "Treatment effects",
+          "Consent on the patient's behalf",
+          "Judgement or grading of the student"
+        ]
+      },
+      "facilitator_only": {
+        "opening_brief": "The learner is asked to assess Mrs Shaw's pain and respond to her concerns.",
+        "expected_safety_points": [
+          "Identity, allergy and prescription checks precede administration",
+          "Consent is informed and voluntary",
+          "Pain and response to intervention are reassessed"
+        ],
+        "pause_triggers": ["Learner attempts administration despite refusal or missing checks"]
+      },
+      "debrief": {
+        "prompts": [
+          "What information influenced Mrs Shaw's decision?",
+          "How did you check understanding without pressuring her?",
+          "What would need documenting or communicating after reassessment?"
+        ],
+        "automatic_competence_decision": false
+      }
+    },
+    {
+      "case_id": "PAT-002",
+      "title": "Acute confusion and a changing clinical picture",
+      "synthetic_data_notice": "Entirely fictional training case",
+      "field": "adult nursing",
+      "setting": "acute medical assessment unit",
+      "complexity": "intermediate",
+      "estimated_duration_minutes": 15,
+      "patient": {
+        "display_name": "David Morgan",
+        "age": 79,
+        "pronouns": "he/him",
+        "preferred_address": "David",
+        "communication_needs": ["Allow one question at a time", "Use short concrete sentences"],
+        "explicit_preferences": ["Wants his glasses and clock within view"],
+        "dialogue_style": "Distractible, gives short answers and is uncertain where he is"
+      },
+      "learning": {
+        "outcomes": [
+          "Recognise acute change in cognition and physiological observations",
+          "Use calm, orienting communication without confrontation",
+          "Escalate concerns using the local approved process",
+          "Continue proportionate observation while awaiting help"
+        ],
+        "nmc_platforms": [
+          "Assessing needs and planning care",
+          "Improving safety and quality of care",
+          "Coordinating care"
+        ]
+      },
+      "clinical": {
+        "presenting_context": "Admitted with a suspected infection; normally independent and oriented according to the authored handover",
+        "visible_at_start": [
+          "Pulls intermittently at the bed cover",
+          "Looks around the unfamiliar room",
+          "Speech is understandable but attention drifts"
+        ],
+        "allergy_record": "Recorded allergy information is available on the simulated chart",
+        "prescribed_items": [],
+        "baseline_observations": {
+          "respiratory_rate_per_min": 22,
+          "oxygen_saturation_percent": 93,
+          "oxygen_delivery": "room air",
+          "heart_rate_per_min": 104,
+          "blood_pressure_mmHg": "102/64",
+          "temperature_celsius": 38.1,
+          "alertness": "new confusion"
+        }
+      },
+      "initial_state": {
+        "elapsed_minutes": 0,
+        "identity_checked": false,
+        "observations_measured": false,
+        "baseline_cognition_checked": false,
+        "senior_help_requested": false,
+        "urgent_escalation_completed": false,
+        "orientation_support_given": false,
+        "deterioration_stage": 0,
+        "revealed_cues": []
+      },
+      "time_events": [
+        {
+          "event_id": "unaddressed_deterioration",
+          "at_minute": 6,
+          "when": { "urgent_escalation_completed": false },
+          "effects": { "deterioration_stage": 1 },
+          "visible_cue": "David becomes more drowsy and needs his name repeated before responding."
+        },
+        {
+          "event_id": "continued_deterioration",
+          "at_minute": 10,
+          "when": { "urgent_escalation_completed": false },
+          "effects": { "deterioration_stage": 2 },
+          "visible_cue": "Breathing appears faster and David gives only one-word replies."
+        }
+      ],
+      "allowed_actions": [
+        {
+          "action_id": "check_identity",
+          "label": "Check identity against the simulated record",
+          "preconditions": {},
+          "effects": { "identity_checked": true },
+          "reveals": []
+        },
+        {
+          "action_id": "measure_observations",
+          "label": "Undertake the complete educator-authored observation set",
+          "preconditions": { "identity_checked": true },
+          "effects": { "observations_measured": true },
+          "reveals": ["Reveal all baseline_observations exactly as authored"],
+          "blocked_message": "Match the patient to the simulated record first."
+        },
+        {
+          "action_id": "check_baseline_cognition",
+          "label": "Review handover and establish whether confusion is new",
+          "preconditions": {},
+          "effects": { "baseline_cognition_checked": true },
+          "reveals": ["Authored handover reports David is normally oriented and independent"]
+        },
+        {
+          "action_id": "provide_orientation_support",
+          "label": "Use calm orientation and make glasses and clock available",
+          "preconditions": {},
+          "effects": { "orientation_support_given": true },
+          "reveals": ["David briefly attends and states his preferred name"]
+        },
+        {
+          "action_id": "request_senior_help",
+          "label": "Ask an appropriate registered colleague for immediate review",
+          "preconditions": {},
+          "effects": { "senior_help_requested": true },
+          "reveals": ["A colleague acknowledges the request"]
+        },
+        {
+          "action_id": "escalate_urgent_concern",
+          "label": "Use the local approved urgent escalation pathway",
+          "preconditions": { "observations_measured": true },
+          "effects": { "urgent_escalation_completed": true },
+          "reveals": ["The receiving clinician asks for a structured handover"],
+          "blocked_message": "The learner needs an observation set to communicate the current physiological state."
+        }
+      ],
+      "ai_contract": {
+        "allowed_context": [
+          "Patient communication profile",
+          "Current deterioration stage",
+          "Currently revealed cues",
+          "Orientation support already provided",
+          "Student's exact words"
+        ],
+        "may_generate": ["Patient dialogue", "Confusion-consistent behaviour", "Emotion", "Response latency"],
+        "must_not_generate": [
+          "Observations or new observation values",
+          "Diagnosis or cause of confusion",
+          "Treatment recommendation",
+          "Clinical outcome",
+          "Capacity determination",
+          "Judgement or grading of the student"
+        ]
+      },
+      "facilitator_only": {
+        "opening_brief": "The learner has noticed that David appears different from the handover description.",
+        "expected_safety_points": [
+          "Treat new confusion as a clinical change",
+          "Obtain and communicate the authored observation set",
+          "Escalate promptly while maintaining respectful communication"
+        ],
+        "pause_triggers": ["Learner leaves the deteriorating patient without arranging observation or assistance"]
+      },
+      "debrief": {
+        "prompts": [
+          "Which cues suggested an acute rather than established change?",
+          "How did communication support dignity while urgency increased?",
+          "What information would make the escalation concise and useful?"
+        ],
+        "automatic_competence_decision": false
+      }
+    },
+    {
+      "case_id": "PAT-003",
+      "title": "Discharge understanding after a new stoma",
+      "synthetic_data_notice": "Entirely fictional training case",
+      "field": "adult nursing",
+      "setting": "colorectal surgical ward",
+      "complexity": "introductory",
+      "estimated_duration_minutes": 20,
+      "patient": {
+        "display_name": "Aisha Khan",
+        "age": 54,
+        "pronouns": "she/her",
+        "preferred_address": "Aisha",
+        "communication_needs": ["Prefers short sections of information followed by time for questions"],
+        "explicit_preferences": [
+          "Wants personal-care discussions conducted with the curtain closed",
+          "Would like her chosen family member involved only after she gives permission"
+        ],
+        "dialogue_style": "Warm but embarrassed; may agree quickly when overloaded"
+      },
+      "learning": {
+        "outcomes": [
+          "Create privacy and seek permission before a sensitive discussion",
+          "Explore the person's priorities and concerns",
+          "Use chunking and teach-back to check understanding",
+          "Identify gaps that require review before discharge"
+        ],
+        "nmc_platforms": [
+          "Being an accountable professional",
+          "Providing and evaluating care",
+          "Coordinating care"
+        ]
+      },
+      "clinical": {
+        "presenting_context": "Preparing for discharge after formation of a new simulated stoma",
+        "visible_at_start": [
+          "Discharge leaflet remains folded on the bedside table",
+          "Aisha says she is ready to go home",
+          "She glances towards the open curtain before discussing care"
+        ],
+        "allergy_record": "Not relevant to this conversation scenario",
+        "prescribed_items": [],
+        "baseline_observations": {}
+      },
+      "initial_state": {
+        "elapsed_minutes": 0,
+        "privacy_created": false,
+        "permission_for_discussion": false,
+        "concerns_explored": false,
+        "information_chunked": false,
+        "teach_back_used": false,
+        "understanding_level": 1,
+        "overload_level": 2,
+        "family_permission": "not_asked",
+        "revealed_cues": []
+      },
+      "time_events": [
+        {
+          "event_id": "rushed_agreement",
+          "at_minute": 7,
+          "when": { "information_chunked": false, "teach_back_used": false },
+          "effects": { "overload_level": 4 },
+          "visible_cue": "Aisha nods repeatedly but cannot describe the first step she would take at home."
+        }
+      ],
+      "allowed_actions": [
+        {
+          "action_id": "create_privacy",
+          "label": "Create privacy for the discussion",
+          "preconditions": {},
+          "effects": { "privacy_created": true },
+          "reveals": []
+        },
+        {
+          "action_id": "seek_discussion_permission",
+          "label": "Ask permission to discuss stoma care",
+          "preconditions": { "privacy_created": true },
+          "effects": { "permission_for_discussion": true },
+          "reveals": ["Aisha agrees to the discussion"],
+          "blocked_message": "Aisha looks towards the open curtain and asks for privacy first."
+        },
+        {
+          "action_id": "explore_concerns",
+          "label": "Ask what matters most about managing at home",
+          "preconditions": { "permission_for_discussion": true },
+          "effects": { "concerns_explored": true, "overload_level_delta": -1 },
+          "reveals": ["Aisha is worried about leakage while outside the house"]
+        },
+        {
+          "action_id": "explain_in_chunks",
+          "label": "Explain one authored care step at a time",
+          "preconditions": { "permission_for_discussion": true },
+          "effects": { "information_chunked": true, "understanding_level_delta": 1 },
+          "reveals": ["Use only educator-authored discharge content"]
+        },
+        {
+          "action_id": "use_teach_back",
+          "label": "Ask Aisha to explain the plan in her own words",
+          "preconditions": { "information_chunked": true },
+          "effects": { "teach_back_used": true },
+          "reveals": ["Aisha recalls routine care but is unsure whom to contact about a problem"],
+          "blocked_message": "Provide a short, authored explanation before checking recall."
+        },
+        {
+          "action_id": "seek_family_permission",
+          "label": "Ask whether Aisha wants her chosen family member involved",
+          "preconditions": { "permission_for_discussion": true },
+          "effects": { "family_permission": "accepted" },
+          "reveals": ["Aisha chooses to involve her sister in the final review"]
+        },
+        {
+          "action_id": "arrange_specialist_review",
+          "label": "Arrange review by the appropriate specialist before discharge",
+          "preconditions": { "teach_back_used": true },
+          "effects": { "understanding_level_delta": 1 },
+          "reveals": ["A specialist review is added to the simulated plan"],
+          "blocked_message": "First establish the specific gap in understanding."
+        }
+      ],
+      "ai_contract": {
+        "allowed_context": [
+          "Patient communication profile",
+          "Currently revealed concerns",
+          "Understanding and overload levels",
+          "Privacy and family-permission states",
+          "Student's exact words"
+        ],
+        "may_generate": ["Patient dialogue", "Embarrassment or relief", "Visible behaviour", "Questions"],
+        "must_not_generate": [
+          "Observations or observation values",
+          "Diagnosis or new clinical complications",
+          "Treatment recommendations or effects",
+          "Clinical stoma-care instructions",
+          "Discharge clearance",
+          "New complications",
+          "Consent to involve family",
+          "Judgement or grading of the student"
+        ]
+      },
+      "facilitator_only": {
+        "opening_brief": "The learner is asked to check whether Aisha is ready for discharge education.",
+        "expected_safety_points": [
+          "Privacy and consent precede the sensitive discussion",
+          "Agreement is not treated as proof of understanding",
+          "An identified knowledge gap leads to appropriate review"
+        ],
+        "pause_triggers": ["Learner shares information with a family member without Aisha's permission"]
+      },
+      "debrief": {
+        "prompts": [
+          "What was the difference between agreement and demonstrated understanding?",
+          "How did privacy affect the conversation?",
+          "Which concern changed the discharge teaching plan?"
+        ],
+        "automatic_competence_decision": false
+      }
+    },
+    {
+      "case_id": "PAT-004",
+      "title": "Personal care, accessible communication and withdrawn consent",
+      "synthetic_data_notice": "Entirely fictional training case",
+      "field": "adult nursing",
+      "setting": "rehabilitation ward",
+      "complexity": "introductory",
+      "estimated_duration_minutes": 15,
+      "patient": {
+        "display_name": "Peter Chen",
+        "age": 62,
+        "pronouns": "he/him",
+        "preferred_address": "Mr Chen",
+        "communication_needs": [
+          "Uses hearing aids",
+          "Needs the speaker to face him and reduce background noise",
+          "Do not assume agreement when he has not heard a question"
+        ],
+        "explicit_preferences": [
+          "Prefers to wash his face and upper body independently",
+          "Wants the door closed before personal care"
+        ],
+        "dialogue_style": "Direct and friendly when he can hear; becomes quiet if rushed"
+      },
+      "learning": {
+        "outcomes": [
+          "Make reasonable communication adjustments",
+          "Establish preferences and obtain consent before personal care",
+          "Support independence rather than taking over",
+          "Recognise and respond immediately when consent is withdrawn"
+        ],
+        "nmc_platforms": [
+          "Being an accountable professional",
+          "Assessing needs and planning care",
+          "Providing and evaluating care"
+        ]
+      },
+      "clinical": {
+        "presenting_context": "Requires some assistance with lower-body washing after reduced mobility",
+        "visible_at_start": [
+          "Television is on and the door is open",
+          "One hearing aid appears loose",
+          "Mr Chen has a washcloth within reach"
+        ],
+        "allergy_record": "Not relevant to this personal-care scenario",
+        "prescribed_items": [],
+        "baseline_observations": {}
+      },
+      "initial_state": {
+        "elapsed_minutes": 0,
+        "noise_reduced": false,
+        "hearing_support_checked": false,
+        "privacy_created": false,
+        "preferences_checked": false,
+        "consent_state": "not_asked",
+        "independence_supported": false,
+        "care_started": false,
+        "care_paused": false,
+        "revealed_cues": []
+      },
+      "time_events": [
+        {
+          "event_id": "withdraw_consent",
+          "at_minute": 6,
+          "when": { "care_started": true },
+          "effects": { "consent_state": "withdrawn" },
+          "visible_cue": "Mr Chen raises his hand and says, 'Stop a moment, please.'"
+        }
+      ],
+      "allowed_actions": [
+        {
+          "action_id": "reduce_noise",
+          "label": "Reduce background noise and face Mr Chen",
+          "preconditions": {},
+          "effects": { "noise_reduced": true },
+          "reveals": []
+        },
+        {
+          "action_id": "check_hearing_support",
+          "label": "Ask whether Mr Chen wants help checking his hearing aid",
+          "preconditions": {},
+          "effects": { "hearing_support_checked": true },
+          "reveals": ["Mr Chen accepts help reseating the loose hearing aid"]
+        },
+        {
+          "action_id": "create_privacy",
+          "label": "Close the door and prepare the private care space",
+          "preconditions": {},
+          "effects": { "privacy_created": true },
+          "reveals": []
+        },
+        {
+          "action_id": "check_preferences",
+          "label": "Ask what Mr Chen wants to do independently",
+          "preconditions": { "noise_reduced": true },
+          "effects": { "preferences_checked": true, "independence_supported": true },
+          "reveals": ["Mr Chen wants to wash his face and upper body himself"],
+          "blocked_message": "First make it easier for Mr Chen to hear the question."
+        },
+        {
+          "action_id": "seek_consent",
+          "label": "Explain the proposed assistance and seek consent",
+          "preconditions": { "privacy_created": true, "preferences_checked": true },
+          "effects": { "consent_state": "accepted" },
+          "reveals": ["Mr Chen agrees to limited assistance with lower-body care"],
+          "blocked_message": "Privacy and Mr Chen's preferences should be established first."
+        },
+        {
+          "action_id": "start_agreed_care",
+          "label": "Begin only the assistance Mr Chen agreed to",
+          "preconditions": { "consent_state": "accepted" },
+          "effects": { "care_started": true },
+          "reveals": [],
+          "blocked_message": "Valid consent has not been established."
+        },
+        {
+          "action_id": "pause_on_withdrawal",
+          "label": "Stop care immediately and ask what Mr Chen needs",
+          "preconditions": { "consent_state": "withdrawn" },
+          "effects": { "care_paused": true },
+          "reveals": ["Mr Chen says the water feels too cold and wants a pause"],
+          "blocked_message": "This action becomes relevant only if consent is withdrawn."
+        }
+      ],
+      "ai_contract": {
+        "allowed_context": [
+          "Patient communication profile",
+          "Environmental adjustments already made",
+          "Privacy, preferences and consent states",
+          "Currently revealed cues",
+          "Student's exact words"
+        ],
+        "may_generate": ["Patient dialogue", "Visible behaviour", "Requests", "Response latency"],
+        "must_not_generate": [
+          "Observations or observation values",
+          "Diagnosis or new clinical facts",
+          "Treatment recommendations or effects",
+          "Consent where none was obtained",
+          "Capacity assumptions",
+          "New impairments or clinical facts",
+          "Personal-care procedure instructions",
+          "Judgement or grading of the student"
+        ]
+      },
+      "facilitator_only": {
+        "opening_brief": "The learner is asked to support Mr Chen with morning personal care.",
+        "expected_safety_points": [
+          "Hearing needs shape access, not cognition",
+          "The patient controls how much assistance is provided",
+          "Withdrawal of consent leads to an immediate pause"
+        ],
+        "pause_triggers": ["Learner continues personal care after the withdrawal cue"]
+      },
+      "debrief": {
+        "prompts": [
+          "Which environmental change most improved communication?",
+          "How did you preserve independence during care?",
+          "What should happen after consent is withdrawn?"
+        ],
+        "automatic_competence_decision": false
+      }
+    }
+  ]
+}
