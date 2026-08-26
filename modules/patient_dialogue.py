@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 from modules import ai_client
-from modules.simulation_content import free_text_response
+from modules.simulation_content import available_dialogue_facts, free_text_response
 
 
 RESPONSE_LATENCIES = ("immediate", "brief_pause", "long_pause")
@@ -60,7 +60,7 @@ ACTION_MAPPING_CONFIDENCE = 0.70
 
 def authored_dialogue_fallback(case: dict[str, Any], session: dict[str, Any]) -> str:
     prior = sum(1 for item in session["transcript"] if item["role"] == "learner_dialogue")
-    return free_text_response(case["case_id"], prior)
+    return free_text_response(case, prior)
 
 
 def authored_expression_fallback(
@@ -139,6 +139,7 @@ def _safe_context(
         },
         "presenting_context": case["clinical"]["presenting_context"],
         "known_state": _known_state(case, state),
+        "authored_dialogue_facts": available_dialogue_facts(case, state),
         "recent_transcript": transcript,
         "learner_words": learner_text,
         "canonical_authored_reaction": canonical_reply,

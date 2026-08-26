@@ -5,10 +5,12 @@ from __future__ import annotations
 from copy import deepcopy
 from html import escape
 import json
+import os
 
 import streamlit as st
 
 from modules import ai_client
+from modules.app_secrets import get_secret
 from modules.patient_dialogue import (
     ACTION_MAPPING_CONFIDENCE,
     ASSESSMENT_CRITERIA,
@@ -16,6 +18,7 @@ from modules.patient_dialogue import (
     authored_dialogue_fallback,
     generate_interaction_evaluation,
 )
+from modules.scenario_repository import ScenarioLibraryError
 from modules.simulation_engine import (
     add_learner_action,
     apply_action,
@@ -41,12 +44,33 @@ st.set_page_config(
 )
 
 
-@st.cache_data
-def get_cases():
-    return load_cases()
+def get_scenario_settings() -> tuple[str, str]:
+    source = os.environ.get("SCENARIO_LIBRARY_URL", "").strip()
+    token = os.environ.get("SCENARIO_LIBRARY_TOKEN", "").strip()
+    return (
+        get_secret("SCENARIO_LIBRARY_URL") or source,
+        get_secret("SCENARIO_LIBRARY_TOKEN") or token,
+    )
 
 
-CASES = get_cases()
+@st.cache_data(ttl=300)
+def get_cases(source: str, _token: str):
+    if not source:
+        return load_cases(), "Bundled development library", ""
+    try:
+        return load_cases(source, token=_token), "External scenario library", ""
+    except ScenarioLibraryError as exc:
+        return (
+            load_cases(),
+            "Bundled fallback library",
+            f"The external library was not used: {exc}",
+        )
+
+
+SCENARIO_LIBRARY_URL, SCENARIO_LIBRARY_TOKEN = get_scenario_settings()
+CASES, SCENARIO_SOURCE_LABEL, SCENARIO_SOURCE_NOTICE = get_cases(
+    SCENARIO_LIBRARY_URL, SCENARIO_LIBRARY_TOKEN
+)
 
 
 def apply_styles() -> None:
@@ -788,7 +812,7 @@ def render_about() -> None:
 apply_styles()
 with st.sidebar:
     st.markdown("## 🩺 Nurse Simulation Studio")
-    st.caption("Deterministic prototype · v0.1")
+    st.caption("Canonical simulation prototype · v0.3")
     page = st.radio(
         "Navigation",
         ["Home", "Patient library", "Run simulation", "Debrief", "Safety & scope"],
@@ -805,6 +829,12 @@ with st.sidebar:
         AI_READY, ai_status = ai_client.configure_selected_provider()
         st.caption(ai_status if AI_READY else f"Authored fallback active. {ai_status}")
     st.divider()
+    st.caption(f"Scenarios: {SCENARIO_SOURCE_LABEL}")
+    if st.button("Refresh scenario library", use_container_width=True):
+        get_cases.clear()
+        st.rerun()
+    if SCENARIO_SOURCE_NOTICE:
+        st.warning(SCENARIO_SOURCE_NOTICE)
     st.caption("Entirely fictional training data. No real patient records.")
 
 if page == "Home":

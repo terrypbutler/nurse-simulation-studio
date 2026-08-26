@@ -1,5 +1,8 @@
 # Nurse Simulation Studio
 
+This is the canonical nursing simulator. The earlier `nursing-app` repository
+is retained only as a migration source and should not be used for new releases.
+
 A first Streamlit prototype for supervised nursing-education rehearsal using
 entirely fictional adult patients.
 
@@ -57,9 +60,26 @@ py .\sample_patients\validate_cases.py
 - Structured reactions–analysis–summary debrief
 - Editable case-specific educator rubrics and evidence notes
 - Learner-safe JSON export
+- Independently published, validated scenario library
+- Portable prebriefs, workspaces, rubrics, dialogue facts and action matching
+- Five-minute scenario cache with a manual refresh and bundled safe fallback
 
 The cases remain development fixtures until reviewed and approved through the
 appropriate nursing-education and local clinical-governance processes.
+
+## External scenario library
+
+Add the published fictional library to local or Streamlit Community Cloud
+secrets:
+
+```toml
+SCENARIO_LIBRARY_URL = "https://terrypbutler.github.io/nursing-scenario-library/library.json"
+```
+
+The Studio accepts HTTPS JSON only, limits its size, validates every scenario
+and falls back to its bundled development cases if the external library is
+unavailable or unsafe. New scenario content is authored in the separate
+`nursing-scenario-library` repository rather than in this application.
 
 Action suitability uses five educator-reviewable dimensions: patient-centredness,
 effectiveness and relevance, safety and timing, consent and dignity, and

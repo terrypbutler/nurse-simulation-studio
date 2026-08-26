@@ -14,7 +14,9 @@
         "age": 67,
         "pronouns": "she/her",
         "preferred_address": "Mrs Shaw",
-        "communication_needs": ["Uses reading glasses for written information"],
+        "communication_needs": [
+          "Uses reading glasses for written information"
+        ],
         "explicit_preferences": [
           "Wants to remain alert when her daughter visits",
           "Would like options explained before deciding"
@@ -134,7 +136,9 @@
         {
           "event_id": "pain_unaddressed",
           "at_minute": 8,
-          "when": { "analgesia_administered": false },
+          "when": {
+            "analgesia_administered": false
+          },
           "effects": {
             "pain_score": 8,
             "trust_delta": -5,
@@ -146,8 +150,13 @@
         {
           "event_id": "expected_reassessment",
           "at_minute": 12,
-          "when": { "analgesia_administered": true, "reassessed": false },
-          "effects": { "emotion_state": "expectant" },
+          "when": {
+            "analgesia_administered": true,
+            "reassessed": false
+          },
+          "effects": {
+            "emotion_state": "expectant"
+          },
           "visible_cue": "Mrs Shaw looks towards the nurse as if expecting a review."
         }
       ],
@@ -156,7 +165,9 @@
           "action_id": "check_identity",
           "label": "Use two identifiers against the simulated record",
           "preconditions": {},
-          "effects": { "identity_checked": true },
+          "effects": {
+            "identity_checked": true
+          },
           "reveals": []
         },
         {
@@ -168,20 +179,33 @@
             "trust_delta": 5,
             "emotion_state": "heard"
           },
-          "reveals": ["Current pain score is 7 out of 10", "Pain is worse on movement"]
+          "reveals": [
+            "Current pain score is 7 out of 10",
+            "Pain is worse on movement"
+          ]
         },
         {
           "action_id": "check_allergies_and_prescription",
           "label": "Check the simulated allergy and prescription records",
-          "preconditions": { "identity_checked": true },
-          "effects": { "allergies_checked": true, "prescription_checked": true },
-          "reveals": ["SIM-PRN-ANALGESIA-01 is available on the simulated chart"],
+          "preconditions": {
+            "identity_checked": true
+          },
+          "effects": {
+            "allergies_checked": true,
+            "prescription_checked": true
+          },
+          "reveals": [
+            "SIM-PRN-ANALGESIA-01 is available on the simulated chart"
+          ],
           "blocked_message": "The record cannot be safely matched until identity is checked."
         },
         {
           "action_id": "explain_analgesia",
           "label": "Explain the charted option and invite questions",
-          "preconditions": { "prescription_checked": true, "allergies_checked": true },
+          "preconditions": {
+            "prescription_checked": true,
+            "allergies_checked": true
+          },
           "effects": {
             "options_explained": true,
             "trust_delta": 10,
@@ -189,15 +213,24 @@
             "overload_level_delta": -1,
             "emotion_state": "cautiously_reassured"
           },
-          "reveals": ["Mrs Shaw is worried that pain relief will make her too sleepy"],
+          "reveals": [
+            "Mrs Shaw is worried that pain relief will make her too sleepy"
+          ],
           "blocked_message": "The option must be verified against the simulated chart first."
         },
         {
           "action_id": "seek_consent",
           "label": "Ask whether Mrs Shaw wishes to accept the charted option",
-          "preconditions": { "options_explained": true },
-          "effects": { "consent_state": "accepted", "trust_delta": 4 },
-          "reveals": ["Mrs Shaw agrees after her concern has been addressed"],
+          "preconditions": {
+            "options_explained": true
+          },
+          "effects": {
+            "consent_state": "accepted",
+            "trust_delta": 4
+          },
+          "reveals": [
+            "Mrs Shaw agrees after her concern has been addressed"
+          ],
           "blocked_message": "Mrs Shaw asks for an explanation before deciding."
         },
         {
@@ -209,21 +242,27 @@
             "prescription_checked": true,
             "consent_state": "accepted"
           },
-          "effects": { "analgesia_administered": true },
+          "effects": {
+            "analgesia_administered": true
+          },
           "reveals": [],
           "blocked_message": "Identity, allergy, prescription and consent checks must all be complete."
         },
         {
           "action_id": "reassess_pain",
           "label": "Reassess comfort and pain after the authored interval",
-          "preconditions": { "analgesia_administered": true },
+          "preconditions": {
+            "analgesia_administered": true
+          },
           "effects": {
             "pain_score": 4,
             "reassessed": true,
             "emotion_state": "more_comfortable",
             "fatigue_level_delta": -1
           },
-          "reveals": ["Authored reassessment pain score is 4 out of 10"],
+          "reveals": [
+            "Authored reassessment pain score is 4 out of 10"
+          ],
           "blocked_message": "No simulated analgesia has been administered in this pathway."
         }
       ],
@@ -252,7 +291,12 @@
           "analgesia_administered",
           "reassessed"
         ],
-        "may_generate": ["Patient dialogue", "Emotion", "Brief visible behaviour", "Response latency"],
+        "may_generate": [
+          "Patient dialogue",
+          "Emotion",
+          "Brief visible behaviour",
+          "Response latency"
+        ],
         "must_not_generate": [
           "Observations",
           "Medicine names or doses",
@@ -270,7 +314,9 @@
           "Consent is informed and voluntary",
           "Pain and response to intervention are reassessed"
         ],
-        "pause_triggers": ["Learner attempts administration despite refusal or missing checks"]
+        "pause_triggers": [
+          "Learner attempts administration despite refusal or missing checks"
+        ]
       },
       "educator_rubric": [
         {
@@ -301,6 +347,102 @@
           "What would need documenting or communicating after reassessment?"
         ],
         "automatic_competence_decision": false
+      },
+      "scenario_version": "1.0.0",
+      "publication_status": "development",
+      "review": {
+        "status": "pending_local_clinical_review",
+        "reviewer": "",
+        "reviewed_at": ""
+      },
+      "dialogue": {
+        "opening_line": "It hurts more than I expected, but I don't want anything that will knock me out.",
+        "action_responses": {
+          "check_identity": "Of course. I'm Eleanor Shaw, and the details on my wristband are correct.",
+          "assess_pain": "It is about seven out of ten. It aches all the time and catches sharply when I try to move.",
+          "check_allergies_and_prescription": "Mrs Shaw watches while you check the simulated records.",
+          "explain_analgesia": "I was worried it might make me too sleepy when my daughter visits. If that concern is covered, I would consider it.",
+          "seek_consent": "Yes, I understand what you have explained and I would like to accept it.",
+          "administer_charted_option": "Thank you. I hope it makes moving a little easier.",
+          "reassess_pain": "It is nearer four now. It still hurts when I move, but it is more manageable."
+        },
+        "fallback_responses": [
+          "Can you explain what the next step would be?",
+          "I want to be involved in the decision."
+        ],
+        "facts": [
+          {
+            "fact": "Her current pain is 7 out of 10 and is worse on movement.",
+            "when": {}
+          },
+          {
+            "fact": "She is worried that stronger pain relief could make her too sleepy for her daughter's visit.",
+            "when": {}
+          },
+          {
+            "fact": "After a clear explanation that addresses her concern, she has chosen to accept the charted option.",
+            "when": {
+              "consent_state": "accepted"
+            }
+          },
+          {
+            "fact": "After the authored reassessment interval, her pain is 4 out of 10 and more manageable.",
+            "when": {
+              "reassessed": true
+            }
+          }
+        ],
+        "action_phrases": {
+          "check_identity": [
+            "check identity",
+            "confirm identity",
+            "check wristband",
+            "two identifiers"
+          ],
+          "assess_pain": [
+            "assess pain",
+            "ask about pain",
+            "pain assessment",
+            "pain score"
+          ],
+          "check_allergies_and_prescription": [
+            "check allergies",
+            "check allergy record",
+            "check prescription",
+            "check medication chart",
+            "check medicine chart",
+            "check drug chart"
+          ],
+          "explain_analgesia": [
+            "explain analgesia",
+            "explain pain relief",
+            "discuss pain relief",
+            "explain charted option",
+            "invite questions"
+          ],
+          "seek_consent": [
+            "seek consent",
+            "ask for consent",
+            "gain consent",
+            "obtain consent",
+            "ask if she accepts",
+            "ask if she wants pain relief"
+          ],
+          "administer_charted_option": [
+            "administer charted option",
+            "administer analgesia",
+            "give pain relief",
+            "give analgesia",
+            "record administration"
+          ],
+          "reassess_pain": [
+            "reassess pain",
+            "review pain",
+            "check pain again",
+            "recheck pain",
+            "reassess comfort"
+          ]
+        }
       }
     },
     {
@@ -316,8 +458,13 @@
         "age": 79,
         "pronouns": "he/him",
         "preferred_address": "David",
-        "communication_needs": ["Allow one question at a time", "Use short concrete sentences"],
-        "explicit_preferences": ["Wants his glasses and clock within view"],
+        "communication_needs": [
+          "Allow one question at a time",
+          "Use short concrete sentences"
+        ],
+        "explicit_preferences": [
+          "Wants his glasses and clock within view"
+        ],
         "dialogue_style": "Distractible, gives short answers and is uncertain where he is",
         "nonverbal_palette": [
           "David's attention drifts towards movement in the corridor before returning to the learner.",
@@ -421,7 +568,9 @@
         {
           "event_id": "unaddressed_deterioration",
           "at_minute": 6,
-          "when": { "urgent_escalation_completed": false },
+          "when": {
+            "urgent_escalation_completed": false
+          },
           "effects": {
             "deterioration_stage": 1,
             "fatigue_level_delta": 2,
@@ -433,7 +582,9 @@
         {
           "event_id": "continued_deterioration",
           "at_minute": 10,
-          "when": { "urgent_escalation_completed": false },
+          "when": {
+            "urgent_escalation_completed": false
+          },
           "effects": {
             "deterioration_stage": 2,
             "fatigue_level_delta": 2,
@@ -449,23 +600,35 @@
           "action_id": "check_identity",
           "label": "Check identity against the simulated record",
           "preconditions": {},
-          "effects": { "identity_checked": true },
+          "effects": {
+            "identity_checked": true
+          },
           "reveals": []
         },
         {
           "action_id": "measure_observations",
           "label": "Undertake the complete educator-authored observation set",
-          "preconditions": { "identity_checked": true },
-          "effects": { "observations_measured": true },
-          "reveals": ["Reveal all baseline_observations exactly as authored"],
+          "preconditions": {
+            "identity_checked": true
+          },
+          "effects": {
+            "observations_measured": true
+          },
+          "reveals": [
+            "Reveal all baseline_observations exactly as authored"
+          ],
           "blocked_message": "Match the patient to the simulated record first."
         },
         {
           "action_id": "check_baseline_cognition",
           "label": "Review handover and establish whether confusion is new",
           "preconditions": {},
-          "effects": { "baseline_cognition_checked": true },
-          "reveals": ["Authored handover reports David is normally oriented and independent"]
+          "effects": {
+            "baseline_cognition_checked": true
+          },
+          "reveals": [
+            "Authored handover reports David is normally oriented and independent"
+          ]
         },
         {
           "action_id": "provide_orientation_support",
@@ -478,21 +641,34 @@
             "confusion_level_delta": -1,
             "emotion_state": "briefly_reassured"
           },
-          "reveals": ["David briefly attends and states his preferred name"]
+          "reveals": [
+            "David briefly attends and states his preferred name"
+          ]
         },
         {
           "action_id": "request_senior_help",
           "label": "Ask an appropriate registered colleague for immediate review",
           "preconditions": {},
-          "effects": { "senior_help_requested": true, "trust_delta": 3 },
-          "reveals": ["A colleague acknowledges the request"]
+          "effects": {
+            "senior_help_requested": true,
+            "trust_delta": 3
+          },
+          "reveals": [
+            "A colleague acknowledges the request"
+          ]
         },
         {
           "action_id": "escalate_urgent_concern",
           "label": "Use the local approved urgent escalation pathway",
-          "preconditions": { "observations_measured": true },
-          "effects": { "urgent_escalation_completed": true },
-          "reveals": ["The receiving clinician asks for a structured handover"],
+          "preconditions": {
+            "observations_measured": true
+          },
+          "effects": {
+            "urgent_escalation_completed": true
+          },
+          "reveals": [
+            "The receiving clinician asks for a structured handover"
+          ],
           "blocked_message": "The learner needs an observation set to communicate the current physiological state."
         }
       ],
@@ -520,7 +696,12 @@
           "confusion_level",
           "dignity_state"
         ],
-        "may_generate": ["Patient dialogue", "Confusion-consistent behaviour", "Emotion", "Response latency"],
+        "may_generate": [
+          "Patient dialogue",
+          "Confusion-consistent behaviour",
+          "Emotion",
+          "Response latency"
+        ],
         "must_not_generate": [
           "Observations or new observation values",
           "Diagnosis or cause of confusion",
@@ -537,7 +718,9 @@
           "Obtain and communicate the authored observation set",
           "Escalate promptly while maintaining respectful communication"
         ],
-        "pause_triggers": ["Learner leaves the deteriorating patient without arranging observation or assistance"]
+        "pause_triggers": [
+          "Learner leaves the deteriorating patient without arranging observation or assistance"
+        ]
       },
       "educator_rubric": [
         {
@@ -568,6 +751,97 @@
           "What information would make the escalation concise and useful?"
         ],
         "automatic_competence_decision": false
+      },
+      "scenario_version": "1.0.0",
+      "publication_status": "development",
+      "review": {
+        "status": "pending_local_clinical_review",
+        "reviewer": "",
+        "reviewed_at": ""
+      },
+      "dialogue": {
+        "opening_line": "I was meant to be going home... Where is my coat?",
+        "action_responses": {
+          "check_identity": "David... David Morgan. Why am I in this room?",
+          "measure_observations": "David becomes distracted while the observations are completed.",
+          "check_baseline_cognition": "The authored handover confirms that this confusion is new.",
+          "provide_orientation_support": "Thank you. I can see the clock now. You said I'm in hospital?",
+          "request_senior_help": "David remains in view while the colleague acknowledges your request.",
+          "escalate_urgent_concern": "The receiving clinician asks you to give a concise structured handover."
+        },
+        "fallback_responses": [
+          "I'm not sure. Could you say that one part at a time?",
+          "David looks towards you, then becomes distracted by activity in the corridor."
+        ],
+        "facts": [
+          {
+            "fact": "He is unsure why he is in the room and is looking for his coat.",
+            "when": {}
+          },
+          {
+            "fact": "He can engage briefly when spoken to one question at a time and shown the clock.",
+            "when": {
+              "orientation_support_given": true
+            }
+          },
+          {
+            "fact": "He is becoming drowsier and needs his name repeated before responding.",
+            "when": {
+              "deterioration_stage": 1
+            }
+          },
+          {
+            "fact": "His speech is now limited to one-word replies because his breathing appears more difficult.",
+            "when": {
+              "deterioration_stage": 2
+            }
+          }
+        ],
+        "action_phrases": {
+          "check_identity": [
+            "check identity",
+            "confirm identity",
+            "check wristband",
+            "two identifiers"
+          ],
+          "measure_observations": [
+            "measure observations",
+            "take observations",
+            "check observations",
+            "check vital signs",
+            "take vital signs",
+            "complete observation set"
+          ],
+          "check_baseline_cognition": [
+            "check baseline cognition",
+            "establish baseline cognition",
+            "review handover",
+            "check if confusion is new",
+            "usual cognition"
+          ],
+          "provide_orientation_support": [
+            "provide orientation",
+            "orientate patient",
+            "orientation support",
+            "show him the clock",
+            "make glasses available",
+            "reduce confusion"
+          ],
+          "request_senior_help": [
+            "request senior help",
+            "ask senior for help",
+            "get senior help",
+            "request immediate review",
+            "ask registered colleague"
+          ],
+          "escalate_urgent_concern": [
+            "escalate urgent concern",
+            "urgent escalation",
+            "escalate deterioration",
+            "call emergency team",
+            "use escalation pathway"
+          ]
+        }
       }
     },
     {
@@ -583,7 +857,9 @@
         "age": 54,
         "pronouns": "she/her",
         "preferred_address": "Aisha",
-        "communication_needs": ["Prefers short sections of information followed by time for questions"],
+        "communication_needs": [
+          "Prefers short sections of information followed by time for questions"
+        ],
         "explicit_preferences": [
           "Wants personal-care discussions conducted with the curtain closed",
           "Would like her chosen family member involved only after she gives permission"
@@ -675,7 +951,10 @@
         {
           "event_id": "rushed_agreement",
           "at_minute": 7,
-          "when": { "information_chunked": false, "teach_back_used": false },
+          "when": {
+            "information_chunked": false,
+            "teach_back_used": false
+          },
           "effects": {
             "overload_level": 4,
             "trust_delta": -3,
@@ -699,63 +978,91 @@
         {
           "action_id": "seek_discussion_permission",
           "label": "Ask permission to discuss stoma care",
-          "preconditions": { "privacy_created": true },
+          "preconditions": {
+            "privacy_created": true
+          },
           "effects": {
             "permission_for_discussion": true,
             "consent_state": "accepted",
             "trust_delta": 2
           },
-          "reveals": ["Aisha agrees to the discussion"],
+          "reveals": [
+            "Aisha agrees to the discussion"
+          ],
           "blocked_message": "Aisha looks towards the open curtain and asks for privacy first."
         },
         {
           "action_id": "explore_concerns",
           "label": "Ask what matters most about managing at home",
-          "preconditions": { "permission_for_discussion": true },
+          "preconditions": {
+            "permission_for_discussion": true
+          },
           "effects": {
             "concerns_explored": true,
             "overload_level_delta": -1,
             "trust_delta": 7,
             "emotion_state": "relieved_to_be_asked"
           },
-          "reveals": ["Aisha is worried about leakage while outside the house"]
+          "reveals": [
+            "Aisha is worried about leakage while outside the house"
+          ]
         },
         {
           "action_id": "explain_in_chunks",
           "label": "Explain one authored care step at a time",
-          "preconditions": { "permission_for_discussion": true },
+          "preconditions": {
+            "permission_for_discussion": true
+          },
           "effects": {
             "information_chunked": true,
             "understanding_level_delta": 1,
             "overload_level_delta": -1
           },
-          "reveals": ["Use only educator-authored discharge content"]
+          "reveals": [
+            "Use only educator-authored discharge content"
+          ]
         },
         {
           "action_id": "use_teach_back",
           "label": "Ask Aisha to explain the plan in her own words",
-          "preconditions": { "information_chunked": true },
+          "preconditions": {
+            "information_chunked": true
+          },
           "effects": {
             "teach_back_used": true,
             "understanding_level_delta": 1,
             "emotion_state": "thoughtful"
           },
-          "reveals": ["Aisha recalls routine care but is unsure whom to contact about a problem"],
+          "reveals": [
+            "Aisha recalls routine care but is unsure whom to contact about a problem"
+          ],
           "blocked_message": "Provide a short, authored explanation before checking recall."
         },
         {
           "action_id": "seek_family_permission",
           "label": "Ask whether Aisha wants her chosen family member involved",
-          "preconditions": { "permission_for_discussion": true },
-          "effects": { "family_permission": "accepted" },
-          "reveals": ["Aisha chooses to involve her sister in the final review"]
+          "preconditions": {
+            "permission_for_discussion": true
+          },
+          "effects": {
+            "family_permission": "accepted"
+          },
+          "reveals": [
+            "Aisha chooses to involve her sister in the final review"
+          ]
         },
         {
           "action_id": "arrange_specialist_review",
           "label": "Arrange review by the appropriate specialist before discharge",
-          "preconditions": { "teach_back_used": true },
-          "effects": { "understanding_level_delta": 1 },
-          "reveals": ["A specialist review is added to the simulated plan"],
+          "preconditions": {
+            "teach_back_used": true
+          },
+          "effects": {
+            "understanding_level_delta": 1
+          },
+          "reveals": [
+            "A specialist review is added to the simulated plan"
+          ],
           "blocked_message": "First establish the specific gap in understanding."
         }
       ],
@@ -784,7 +1091,12 @@
           "dignity_state",
           "consent_state"
         ],
-        "may_generate": ["Patient dialogue", "Embarrassment or relief", "Visible behaviour", "Questions"],
+        "may_generate": [
+          "Patient dialogue",
+          "Embarrassment or relief",
+          "Visible behaviour",
+          "Questions"
+        ],
         "must_not_generate": [
           "Observations or observation values",
           "Diagnosis or new clinical complications",
@@ -803,7 +1115,9 @@
           "Agreement is not treated as proof of understanding",
           "An identified knowledge gap leads to appropriate review"
         ],
-        "pause_triggers": ["Learner shares information with a family member without Aisha's permission"]
+        "pause_triggers": [
+          "Learner shares information with a family member without Aisha's permission"
+        ]
       },
       "educator_rubric": [
         {
@@ -834,6 +1148,94 @@
           "Which concern changed the discharge teaching plan?"
         ],
         "automatic_competence_decision": false
+      },
+      "scenario_version": "1.0.0",
+      "publication_status": "development",
+      "review": {
+        "status": "pending_local_clinical_review",
+        "reviewer": "",
+        "reviewed_at": ""
+      },
+      "dialogue": {
+        "opening_line": "They said I might go home today. I think I've understood everything.",
+        "action_responses": {
+          "create_privacy": "Thank you. I didn't want everyone passing by to hear this.",
+          "seek_discussion_permission": "Yes, we can talk about it now.",
+          "explore_concerns": "I'm most worried about it leaking when I'm out. I keep saying I'm fine, but I don't really know what I would do.",
+          "explain_in_chunks": "That was easier to follow when we took one part at a time.",
+          "use_teach_back": "I can explain the routine part, but I'm not sure who I should contact if something goes wrong.",
+          "seek_family_permission": "Yes, I would like my sister to join us for the final review.",
+          "arrange_specialist_review": "That would reassure me before I go home."
+        },
+        "fallback_responses": [
+          "Could we take that slowly? I don't want to pretend I understand.",
+          "Aisha listens, then glances at the folded leaflet."
+        ],
+        "facts": [
+          {
+            "fact": "She is worried about leakage when outside the house but may initially say she is fine.",
+            "when": {}
+          },
+          {
+            "fact": "She can describe routine care but is unsure whom to contact if a problem occurs.",
+            "when": {
+              "teach_back_used": true
+            }
+          },
+          {
+            "fact": "She has chosen to involve her sister in the final review.",
+            "when": {
+              "family_permission": "accepted"
+            }
+          }
+        ],
+        "action_phrases": {
+          "create_privacy": [
+            "create privacy",
+            "provide privacy",
+            "close the curtains",
+            "private discussion"
+          ],
+          "seek_discussion_permission": [
+            "ask permission to discuss",
+            "seek permission to discuss",
+            "ask if we can talk",
+            "permission to talk"
+          ],
+          "explore_concerns": [
+            "explore concerns",
+            "ask about concerns",
+            "ask what matters",
+            "managing at home",
+            "worries about home"
+          ],
+          "explain_in_chunks": [
+            "explain in chunks",
+            "one step at a time",
+            "break down explanation",
+            "explain care step"
+          ],
+          "use_teach_back": [
+            "use teach back",
+            "teach back",
+            "explain in her own words",
+            "repeat the plan",
+            "check understanding"
+          ],
+          "seek_family_permission": [
+            "ask about family involvement",
+            "involve family",
+            "family member involved",
+            "seek family permission",
+            "ask about her sister"
+          ],
+          "arrange_specialist_review": [
+            "arrange specialist review",
+            "request specialist review",
+            "refer to stoma nurse",
+            "specialist before discharge"
+          ]
+        }
       }
     },
     {
@@ -947,7 +1349,9 @@
         {
           "event_id": "withdraw_consent",
           "at_minute": 6,
-          "when": { "care_started": true },
+          "when": {
+            "care_started": true
+          },
           "effects": {
             "consent_state": "withdrawn",
             "emotion_state": "uncomfortable",
@@ -973,8 +1377,13 @@
           "action_id": "check_hearing_support",
           "label": "Ask whether Mr Chen wants help checking his hearing aid",
           "preconditions": {},
-          "effects": { "hearing_support_checked": true, "trust_delta": 5 },
-          "reveals": ["Mr Chen accepts help reseating the loose hearing aid"]
+          "effects": {
+            "hearing_support_checked": true,
+            "trust_delta": 5
+          },
+          "reveals": [
+            "Mr Chen accepts help reseating the loose hearing aid"
+          ]
         },
         {
           "action_id": "create_privacy",
@@ -990,43 +1399,63 @@
         {
           "action_id": "check_preferences",
           "label": "Ask what Mr Chen wants to do independently",
-          "preconditions": { "noise_reduced": true },
+          "preconditions": {
+            "noise_reduced": true
+          },
           "effects": {
             "preferences_checked": true,
             "independence_supported": true,
             "trust_delta": 8,
             "emotion_state": "engaged"
           },
-          "reveals": ["Mr Chen wants to wash his face and upper body himself"],
+          "reveals": [
+            "Mr Chen wants to wash his face and upper body himself"
+          ],
           "blocked_message": "First make it easier for Mr Chen to hear the question."
         },
         {
           "action_id": "seek_consent",
           "label": "Explain the proposed assistance and seek consent",
-          "preconditions": { "privacy_created": true, "preferences_checked": true },
-          "effects": { "consent_state": "accepted", "trust_delta": 5 },
-          "reveals": ["Mr Chen agrees to limited assistance with lower-body care"],
+          "preconditions": {
+            "privacy_created": true,
+            "preferences_checked": true
+          },
+          "effects": {
+            "consent_state": "accepted",
+            "trust_delta": 5
+          },
+          "reveals": [
+            "Mr Chen agrees to limited assistance with lower-body care"
+          ],
           "blocked_message": "Privacy and Mr Chen's preferences should be established first."
         },
         {
           "action_id": "start_agreed_care",
           "label": "Begin only the assistance Mr Chen agreed to",
-          "preconditions": { "consent_state": "accepted" },
-          "effects": { "care_started": true },
+          "preconditions": {
+            "consent_state": "accepted"
+          },
+          "effects": {
+            "care_started": true
+          },
           "reveals": [],
           "blocked_message": "Valid consent has not been established."
         },
         {
           "action_id": "pause_on_withdrawal",
           "label": "Stop care immediately and ask what Mr Chen needs",
-          "preconditions": { "consent_state": "withdrawn" },
+          "preconditions": {
+            "consent_state": "withdrawn"
+          },
           "effects": {
             "care_paused": true,
             "trust_delta": 8,
             "emotion_state": "relieved",
             "dignity_state": "preserved"
           },
-          "reveals": ["Mr Chen says the water feels too cold and wants a pause"],
+          "reveals": [
+            "Mr Chen says the water feels too cold and wants a pause"
+          ],
           "blocked_message": "This action becomes relevant only if consent is withdrawn."
         }
       ],
@@ -1056,7 +1485,12 @@
           "confusion_level",
           "dignity_state"
         ],
-        "may_generate": ["Patient dialogue", "Visible behaviour", "Requests", "Response latency"],
+        "may_generate": [
+          "Patient dialogue",
+          "Visible behaviour",
+          "Requests",
+          "Response latency"
+        ],
         "must_not_generate": [
           "Observations or observation values",
           "Diagnosis or new clinical facts",
@@ -1075,7 +1509,9 @@
           "The patient controls how much assistance is provided",
           "Withdrawal of consent leads to an immediate pause"
         ],
-        "pause_triggers": ["Learner continues personal care after the withdrawal cue"]
+        "pause_triggers": [
+          "Learner continues personal care after the withdrawal cue"
+        ]
       },
       "educator_rubric": [
         {
@@ -1106,6 +1542,96 @@
           "What should happen after consent is withdrawn?"
         ],
         "automatic_competence_decision": false
+      },
+      "scenario_version": "1.0.0",
+      "publication_status": "development",
+      "review": {
+        "status": "pending_local_clinical_review",
+        "reviewer": "",
+        "reviewed_at": ""
+      },
+      "dialogue": {
+        "opening_line": "Sorry, I didn't catch that—the television is quite loud.",
+        "action_responses": {
+          "reduce_noise": "That's much better. I can hear you when you face me like that.",
+          "check_hearing_support": "Yes please—the left hearing aid feels loose.",
+          "create_privacy": "Thank you for closing the door.",
+          "check_preferences": "I can wash my face and upper body myself. I only need help lower down.",
+          "seek_consent": "Yes, I agree to that amount of help.",
+          "start_agreed_care": "All right, I'm ready to begin.",
+          "pause_on_withdrawal": "Thank you for stopping. The water feels too cold; I need a moment."
+        },
+        "fallback_responses": [
+          "Please face me when you speak so I can follow you.",
+          "Mr Chen waits for the background noise to settle before replying."
+        ],
+        "facts": [
+          {
+            "fact": "He wants to wash his face and upper body independently and needs help only with lower-body washing.",
+            "when": {}
+          },
+          {
+            "fact": "He can hear more clearly when the speaker faces him and the background noise is reduced.",
+            "when": {
+              "noise_reduced": true
+            }
+          },
+          {
+            "fact": "He has withdrawn consent because the water feels too cold and wants care to pause.",
+            "when": {
+              "consent_state": "withdrawn"
+            }
+          }
+        ],
+        "action_phrases": {
+          "reduce_noise": [
+            "reduce noise",
+            "turn down television",
+            "turn off television",
+            "reduce background noise",
+            "face the patient"
+          ],
+          "check_hearing_support": [
+            "check hearing aid",
+            "help with hearing aid",
+            "hearing support",
+            "ask about hearing aid"
+          ],
+          "create_privacy": [
+            "create privacy",
+            "provide privacy",
+            "close the door",
+            "private care space"
+          ],
+          "check_preferences": [
+            "check preferences",
+            "ask his preferences",
+            "ask what he can do",
+            "ask what he wants to do",
+            "independent care"
+          ],
+          "seek_consent": [
+            "seek consent",
+            "ask for consent",
+            "gain consent",
+            "obtain consent",
+            "ask permission to help"
+          ],
+          "start_agreed_care": [
+            "start agreed care",
+            "begin agreed care",
+            "start personal care",
+            "provide agreed assistance",
+            "help with lower body"
+          ],
+          "pause_on_withdrawal": [
+            "stop care",
+            "pause care",
+            "withdraws consent",
+            "withdrawal of consent",
+            "ask what he needs"
+          ]
+        }
       }
     }
   ]

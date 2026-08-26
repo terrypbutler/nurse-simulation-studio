@@ -5,20 +5,20 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import json
 from pathlib import Path
 import re
 from typing import Any
 
+from modules.scenario_repository import DEFAULT_LOCAL_LIBRARY, load_scenario_library
 from modules.simulation_content import (
-    ACTION_PHRASES,
-    OPENING_LINES,
+    action_phrases,
     action_response,
     free_text_response,
+    opening_line,
 )
 
 
-DATA_PATH = Path(__file__).resolve().parents[1] / "sample_patients" / "patient_cases.json"
+DATA_PATH = DEFAULT_LOCAL_LIBRARY
 PRACTICE_MODES = {"coached", "immersive"}
 
 
@@ -30,11 +30,10 @@ class ActionResult:
     fired_events: tuple[str, ...] = ()
 
 
-def load_cases(path: Path = DATA_PATH) -> list[dict[str, Any]]:
-    """Load the immutable authored case definitions."""
+def load_cases(path: Path | str = DATA_PATH, token: str = "") -> list[dict[str, Any]]:
+    """Load validated cases from a local fallback or external HTTPS library."""
 
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    return payload["cases"]
+    return load_scenario_library(path, token=token)
 
 
 def case_by_id(cases: list[dict[str, Any]], case_id: str) -> dict[str, Any]:
@@ -74,7 +73,7 @@ def new_session(
             {
                 "role": "patient",
                 "speaker": case["patient"]["display_name"],
-                "text": OPENING_LINES.get(case["case_id"], "The patient waits to speak with you."),
+                "text": opening_line(case),
                 "minute": 0,
             }
         ],
@@ -177,7 +176,7 @@ def match_action_id(case: dict[str, Any], text: str) -> str | None:
     allowed_ids = {action["action_id"] for action in case["allowed_actions"]}
     candidates: list[tuple[int, str]] = []
 
-    for action_id, phrases in ACTION_PHRASES.get(case["case_id"], {}).items():
+    for action_id, phrases in action_phrases(case).items():
         if action_id not in allowed_ids:
             continue
         best_score = 0
@@ -220,7 +219,7 @@ def apply_action(
     session["state"]["revealed_cues"].extend(new_cues)
     session["state"]["elapsed_minutes"] += max(0, minutes)
 
-    response = action_response(case["case_id"], action_id)
+    response = action_response(case, action_id)
     session["transcript"].append(
         {
             "role": "learner_action",
@@ -331,7 +330,7 @@ def add_learner_dialogue(
             "minute": session["state"]["elapsed_minutes"],
         }
     )
-    reply = reply_text or free_text_response(case["case_id"], prior_messages)
+    reply = reply_text or free_text_response(case, prior_messages)
     session["transcript"].append(
         {
             "role": "patient",

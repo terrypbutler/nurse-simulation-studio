@@ -99,6 +99,8 @@ class PatientDialogueTests(unittest.TestCase):
         self.assertNotIn("facilitator_only", captured["prompt"])
         self.assertNotIn("baseline_observations", captured["prompt"])
         self.assertNotIn("prescribed_items", captured["prompt"])
+        self.assertIn("authored_dialogue_facts", captured["prompt"])
+        self.assertIn("7 out of 10", captured["prompt"])
 
     def test_api_failure_uses_authored_fallback(self):
         class FailingModel:

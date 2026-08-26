@@ -18,6 +18,9 @@
       "type": "object",
       "required": [
         "case_id",
+        "scenario_version",
+        "publication_status",
+        "review",
         "title",
         "synthetic_data_notice",
         "field",
@@ -31,12 +34,16 @@
         "time_events",
         "allowed_actions",
         "ai_contract",
+        "dialogue",
         "facilitator_only",
         "educator_rubric",
         "debrief"
       ],
       "properties": {
         "case_id": { "type": "string", "pattern": "^PAT-[0-9]{3}$" },
+        "scenario_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "publication_status": { "enum": ["development", "approved"] },
+        "review": { "type": "object" },
         "title": { "type": "string", "minLength": 5 },
         "synthetic_data_notice": { "const": "Entirely fictional training case" },
         "field": { "enum": ["adult nursing"] },
@@ -59,6 +66,7 @@
           "items": { "$ref": "#/$defs/action" }
         },
         "ai_contract": { "$ref": "#/$defs/aiContract" },
+        "dialogue": { "$ref": "#/$defs/dialogue" },
         "facilitator_only": { "type": "object" },
         "educator_rubric": {
           "type": "array",
@@ -136,6 +144,20 @@
         "effects": { "type": "object" },
         "reveals": { "type": "array", "items": { "type": "string" } },
         "blocked_message": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "dialogue": {
+      "type": "object",
+      "required": ["opening_line", "action_responses", "action_phrases", "fallback_responses", "facts"],
+      "properties": {
+        "opening_line": { "type": "string", "minLength": 1 },
+        "action_responses": { "type": "object" },
+        "action_phrases": { "type": "object" },
+        "fallback_responses": {
+          "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }
+        },
+        "facts": { "type": "array" }
       },
       "additionalProperties": false
     },
