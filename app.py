@@ -12,6 +12,12 @@ import streamlit as st
 
 from modules import ai_client
 from modules.app_secrets import get_secret
+from modules.clinical_observations import (
+    CHECK_ORDER,
+    format_observation_results,
+    generate_observations,
+    requested_checks,
+)
 from modules.patient_dialogue import (
     ACTION_MAPPING_CONFIDENCE,
     ASSESSMENT_CRITERIA,
@@ -28,11 +34,13 @@ from modules.simulation_engine import (
     apply_action,
     append_patient_response,
     case_by_id,
+    clinical_check_block,
     end_session,
     load_cases,
     match_action_id,
     new_session,
     record_learner_dialogue,
+    record_clinical_check,
     record_nursing_note,
     record_unmapped_action,
     remove_latest_patient_response,
@@ -147,7 +155,8 @@ def safety_banner() -> None:
         """
         <div class="safety-banner"><strong>Prototype:</strong> entirely fictional cases and
         deterministic clinical state. AI may interpret an interaction and phrase the patient's
-        response, but cannot change clinical facts. This app is not clinical guidance, a medicines
+        response. A separate bounded generator may vary fictional observations around an authored
+        baseline, but cannot change clinical state. This app is not clinical guidance, a medicines
         reference or a competence-assessment system.</div>
         """,
         unsafe_allow_html=True,
@@ -359,13 +368,24 @@ def render_state(case: dict, session: dict, facilitator_mode: bool) -> None:
 
     with observations_tab:
         if state.get("observations_measured"):
-            st.json(case["clinical"]["baseline_observations"])
+            generated_values = session.get("generated_observations", {})
+            if generated_values:
+                st.info(format_observation_results(generated_values, CHECK_ORDER))
+                st.caption("Bounded AI-generated fictional training observations")
+            else:
+                st.json(case["clinical"]["baseline_observations"])
+                st.caption("Educator-authored fictional training observations")
         elif case["clinical"].get("baseline_observations"):
             st.info(
                 "No observation set has been revealed in this encounter. Describe what you would do in the action box."
             )
         else:
             st.caption("No observation chart is needed for this focused conversation scenario.")
+        if session.get("clinical_check_log"):
+            st.markdown("**Checks completed during this encounter**")
+            for item in session["clinical_check_log"]:
+                source = "AI-generated training values" if item["source"] == "bounded_ai" else "authored baseline"
+                st.write(f"Minute {item['minute']}: {item['result']} ({source})")
 
     with records_tab:
         records = case["clinical_workspace"].get("record_access", [])
@@ -564,6 +584,7 @@ def render_simulation(facilitator_mode: bool) -> None:
                 st.warning("Describe an action, enter something to say, or provide both.")
             else:
                 state_before = deepcopy(session["state"])
+                clinical_checks = requested_checks(action_clean)
                 canonical_reply = authored_dialogue_fallback(case, session)
                 action_status = "not_provided"
                 matched_action_label = None
@@ -572,6 +593,7 @@ def render_simulation(facilitator_mode: bool) -> None:
                 applied_actions = []
                 blocked_messages = []
                 canonical_replies = []
+                clinical_result_recorded = False
 
                 if AI_READY:
                     with st.spinner("Interpreting the interaction against the patient state…"):
@@ -626,6 +648,67 @@ def render_simulation(facilitator_mode: bool) -> None:
                 elif blocked_messages:
                     action_status = "blocked"
                     canonical_reply = blocked_messages[0]
+                elif clinical_checks:
+                    check_block_message = clinical_check_block(case, session)
+                    if check_block_message:
+                        action_status = "blocked"
+                        canonical_reply = check_block_message
+                    else:
+                        full_observation_action = next(
+                            (
+                                item
+                                for item in case["allowed_actions"]
+                                if item["action_id"] == "measure_observations"
+                            ),
+                            None,
+                        )
+                        if clinical_checks == CHECK_ORDER and full_observation_action:
+                            full_result = apply_action(
+                                case,
+                                session,
+                                "measure_observations",
+                                learner_text=action_clean,
+                            )
+                            if full_result.applied:
+                                remove_latest_patient_response(session)
+                                latest_action = session["action_log"][-1]
+                                applied_actions.append(latest_action)
+                                action_status = "applied"
+                                matched_action_label = latest_action["label"]
+                                canonical_reply = full_result.message
+                            else:
+                                action_status = "blocked"
+                                canonical_reply = full_result.message
+                        if action_status not in {"applied", "blocked"}:
+                            observation_set = generate_observations(case, session)
+                    if (
+                        not check_block_message
+                        and action_status not in {"applied", "blocked"}
+                        and observation_set.values
+                    ):
+                        result_text = format_observation_results(
+                            observation_set.values, clinical_checks
+                        )
+                        check_result = record_clinical_check(
+                            case,
+                            session,
+                            action_clean,
+                            result_text,
+                            clinical_checks,
+                            generated=observation_set.generated,
+                        )
+                        if check_result.applied:
+                            action_status = "clinical_check"
+                            matched_action_label = "Clinical observation check"
+                            clinical_result_recorded = True
+                        if observation_set.notice:
+                            st.info(observation_set.notice)
+                    elif (
+                        not check_block_message
+                        and action_status not in {"applied", "blocked"}
+                    ):
+                        action_status = "assessed_only"
+                        st.info(observation_set.notice)
                 elif action_clean:
                     if AI_READY:
                         action_result = record_unmapped_action(case, session, action_clean)
@@ -674,6 +757,25 @@ def render_simulation(facilitator_mode: bool) -> None:
                             canonical_reply = inferred_result.message
                             remove_latest_patient_response(session)
 
+                if clinical_checks and action_status == "applied" and not clinical_result_recorded:
+                    observation_set = generate_observations(case, session)
+                    if observation_set.values:
+                        result_text = format_observation_results(
+                            observation_set.values, clinical_checks
+                        )
+                        record_clinical_check(
+                            case,
+                            session,
+                            action_clean,
+                            result_text,
+                            clinical_checks,
+                            minutes=0,
+                            generated=observation_set.generated,
+                            record_learner_action=False,
+                        )
+                    if observation_set.notice:
+                        st.info(observation_set.notice)
+
                 if dialogue_clean:
                     dialogue_minutes = 0 if action_clean or action_status == "applied" else 1
                     record_learner_dialogue(
@@ -711,6 +813,7 @@ def render_simulation(facilitator_mode: bool) -> None:
                     "blocked": 2,
                     "unrecognised": 3,
                     "assessed_only": 3,
+                    "clinical_check": 4,
                 }.get(action_status)
                 session.setdefault("feedback_log", []).append(
                     {

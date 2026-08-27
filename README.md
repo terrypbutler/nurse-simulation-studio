@@ -51,6 +51,8 @@ py .\sample_patients\validate_cases.py
 - AI interpretation of natural-language actions with a 1–5 suitability range
 - Dialogue-only progression for conversational actions, with bounded multi-action recognition
 - Explicit action descriptions retained for observations, administration, escalation and hands-on care
+- Patient-specific fictional observations generated within validated bounds around an authored baseline
+- Stable observation results within each deterministic patient stage, with authored fallback on failure
 - Direct, supportive, tangential, unclear and counterproductive relevance bands
 - Combined action-and-dialogue submission with patient-state-aware formative feedback
 - Richer bounded state for trust, emotion, fatigue, overload, understanding,

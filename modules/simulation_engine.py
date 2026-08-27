@@ -80,6 +80,9 @@ def new_session(
         "action_log": [],
         "feedback_log": [],
         "nursing_notes": [],
+        "clinical_check_log": [],
+        "generated_observations": {},
+        "generated_observation_stage": None,
         "latest_patient_expression": {},
         "educator_rubric": deepcopy(case.get("educator_rubric", [])),
         "reflection": {},
@@ -162,6 +165,27 @@ def _find_action(case: dict[str, Any], action_id: str) -> dict[str, Any]:
         if action["action_id"] == action_id:
             return action
     raise KeyError(f"Unknown action for {case['case_id']}: {action_id}")
+
+
+def clinical_check_block(case: dict[str, Any], session: dict[str, Any]) -> str | None:
+    """Apply an authored full-observation prerequisite to individual checks too."""
+
+    observation_action = next(
+        (
+            action
+            for action in case["allowed_actions"]
+            if action["action_id"] == "measure_observations"
+        ),
+        None,
+    )
+    if observation_action and not _conditions_met(
+        session["state"], observation_action["preconditions"]
+    ):
+        return observation_action.get(
+            "blocked_message",
+            "The required earlier step has not been completed.",
+        )
+    return None
 
 
 def _normalise_action_text(text: str) -> tuple[str, set[str]]:
@@ -367,6 +391,56 @@ def record_learner_dialogue(
     return ActionResult(True, "Dialogue recorded.", (), fired)
 
 
+def record_clinical_check(
+    case: dict[str, Any],
+    session: dict[str, Any],
+    learner_text: str,
+    result_text: str,
+    check_ids: tuple[str, ...],
+    *,
+    minutes: int = 2,
+    generated: bool = False,
+    record_learner_action: bool = True,
+) -> ActionResult:
+    """Record bounded fictional observations without placing AI in the state engine."""
+
+    clean_action = " ".join(learner_text.split())[:600]
+    clean_result = " ".join(result_text.split())[:1000]
+    if not clean_action or not clean_result or not check_ids:
+        return ActionResult(False, "No supported clinical check was completed.")
+    if blocked := _interaction_block(session):
+        return ActionResult(False, blocked)
+    session["state"]["elapsed_minutes"] += max(0, minutes)
+    if record_learner_action:
+        session["transcript"].append(
+            {
+                "role": "learner_action",
+                "speaker": session["learner_name"],
+                "text": clean_action,
+                "minute": session["state"]["elapsed_minutes"],
+            }
+        )
+    session["transcript"].append(
+        {
+            "role": "cue",
+            "speaker": "Fictional observation result",
+            "text": clean_result,
+            "minute": session["state"]["elapsed_minutes"],
+            "source": "bounded_ai" if generated else "authored_baseline",
+        }
+    )
+    session.setdefault("clinical_check_log", []).append(
+        {
+            "checks": list(check_ids),
+            "result": clean_result,
+            "minute": session["state"]["elapsed_minutes"],
+            "source": "bounded_ai" if generated else "authored_baseline",
+        }
+    )
+    fired = _resolve_due_events(case, session)
+    return ActionResult(True, clean_result, (), fired)
+
+
 def record_nursing_note(
     case: dict[str, Any], session: dict[str, Any], text: str, minutes: int = 1
 ) -> ActionResult:
@@ -479,6 +553,7 @@ def student_export(case: dict[str, Any], session: dict[str, Any]) -> dict[str, A
         "transcript": deepcopy(session["transcript"]),
         "actions": deepcopy(session["action_log"]),
         "nursing_notes": deepcopy(session.get("nursing_notes", [])),
+        "clinical_checks": deepcopy(session.get("clinical_check_log", [])),
         "formative_feedback": deepcopy(session.get("feedback_log", [])),
         "reflection": deepcopy(session.get("reflection", {})),
     }
