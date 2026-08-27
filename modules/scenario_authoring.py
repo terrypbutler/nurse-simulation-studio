@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 import json
+import re
 from typing import Any
 
 from modules import ai_client
@@ -59,6 +60,42 @@ def _normalise_dialogue_facts(value: Any) -> list[dict[str, Any]]:
     return facts
 
 
+def _normalise_prescribed_items(value: Any) -> list[dict[str, str]]:
+    """Remove generated dose fields and enforce the educator-controlled source."""
+
+    if not isinstance(value, list):
+        return []
+    items: list[dict[str, str]] = []
+    dose_pattern = re.compile(
+        r"\b\d+(?:\.\d+)?\s*(?:mg|mcg|micrograms?|grams?|g|ml|units?)\b",
+        flags=re.IGNORECASE,
+    )
+    for index, item in enumerate(value, start=1):
+        if isinstance(item, dict):
+            order_id = str(item.get("order_id") or f"SIM-ORDER-{index:02d}").strip()
+            display_text = str(
+                item.get("display_text")
+                or item.get("description")
+                or item.get("name")
+                or "Educator-approved simulated prescription item"
+            ).strip()
+        elif isinstance(item, str):
+            order_id = f"SIM-ORDER-{index:02d}"
+            display_text = item.strip()
+        else:
+            continue
+        if not display_text or dose_pattern.search(display_text):
+            display_text = "Educator-approved simulated prescription item"
+        items.append(
+            {
+                "order_id": order_id,
+                "display_text": display_text,
+                "dose_source": "Read only from the simulated prescription chart",
+            }
+        )
+    return items
+
+
 def _invariants(candidate: dict[str, Any], base: dict[str, Any], case_id: str) -> dict[str, Any]:
     result = _deep_merge(base, candidate)
     result["case_id"] = case_id
@@ -70,6 +107,10 @@ def _invariants(candidate: dict[str, Any], base: dict[str, Any], case_id: str) -
     result.setdefault("debrief", {})["automatic_competence_decision"] = False
     dialogue = result.setdefault("dialogue", {})
     dialogue["facts"] = _normalise_dialogue_facts(dialogue.get("facts", []))
+    clinical = result.setdefault("clinical", {})
+    clinical["prescribed_items"] = _normalise_prescribed_items(
+        clinical.get("prescribed_items", [])
+    )
     return result
 
 
@@ -81,7 +122,7 @@ Transform the educator's ordinary-language request into a complete scenario JSON
 Authoring rules:
 - This is a development draft, not clinical guidance or an approved curriculum.
 - Never include real patient data or direct identifiers.
-- Never provide medicine doses. Prescription fixtures may contain only order_id, display_text and dose_source; dose_source must refer to the simulated prescription chart.
+- Never provide medicine doses. Prescription fixtures may contain only order_id, display_text and dose_source. Set dose_source exactly to "Read only from the simulated prescription chart".
 - Clinical, consent and patient-experience changes must be deterministic effects under allowed_actions or time_events.
 - Every allowed action needs a matching dialogue.action_responses entry and dialogue.action_phrases list.
 - Use clear snake_case IDs. Preconditions and effects must refer to keys in initial_state.

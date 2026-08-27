@@ -108,6 +108,42 @@ class ScenarioAuthoringTests(unittest.TestCase):
             ],
         )
 
+    def test_prescription_items_are_hardened_and_doses_removed(self):
+        candidate = deepcopy(self.base)
+        candidate["clinical"]["prescribed_items"] = [
+            {
+                "order_id": "SIM-01",
+                "display_text": "Generated option 20 mg",
+                "dose": "20 mg",
+                "dose_source": "medication record",
+            },
+            "Second educator-approved charted option",
+        ]
+        model = FakeModel([json.dumps(candidate)])
+
+        result = generate_scenario_draft(
+            self.base,
+            "Create a fictional scenario that includes checking an educator-controlled simulated prescription chart.",
+            "PAT-005",
+            model=model,
+        )
+
+        self.assertIsNotNone(result.case)
+        prescribed = result.case["clinical"]["prescribed_items"]
+        self.assertEqual(
+            prescribed[0],
+            {
+                "order_id": "SIM-01",
+                "display_text": "Educator-approved simulated prescription item",
+                "dose_source": "Read only from the simulated prescription chart",
+            },
+        )
+        self.assertEqual(
+            prescribed[1]["dose_source"],
+            "Read only from the simulated prescription chart",
+        )
+        self.assertNotIn("dose", prescribed[0])
+
 
 if __name__ == "__main__":
     unittest.main()
