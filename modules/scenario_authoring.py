@@ -38,6 +38,27 @@ def _deep_merge(base: Any, candidate: Any) -> Any:
     return result
 
 
+def _normalise_dialogue_facts(value: Any) -> list[dict[str, Any]]:
+    """Accept common model variants while preserving deterministic conditions."""
+
+    if not isinstance(value, list):
+        return []
+    facts: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, str):
+            text = item.strip()
+            conditions: dict[str, Any] = {}
+        elif isinstance(item, dict):
+            text = str(item.get("fact") or item.get("text") or item.get("content") or "").strip()
+            raw_conditions = item.get("when", item.get("condition", {}))
+            conditions = raw_conditions if isinstance(raw_conditions, dict) else {}
+        else:
+            continue
+        if text:
+            facts.append({"fact": text, "when": conditions})
+    return facts
+
+
 def _invariants(candidate: dict[str, Any], base: dict[str, Any], case_id: str) -> dict[str, Any]:
     result = _deep_merge(base, candidate)
     result["case_id"] = case_id
@@ -47,6 +68,8 @@ def _invariants(candidate: dict[str, Any], base: dict[str, Any], case_id: str) -
     result["scenario_version"] = base.get("scenario_version", "1.0.0")
     result["review"] = deepcopy(base.get("review", {}))
     result.setdefault("debrief", {})["automatic_competence_decision"] = False
+    dialogue = result.setdefault("dialogue", {})
+    dialogue["facts"] = _normalise_dialogue_facts(dialogue.get("facts", []))
     return result
 
 

@@ -77,6 +77,37 @@ class ScenarioAuthoringTests(unittest.TestCase):
         self.assertIn("more detail", result.error)
         self.assertEqual(model.calls, [])
 
+    def test_common_dialogue_fact_variants_are_normalised(self):
+        candidate = deepcopy(self.base)
+        candidate["dialogue"]["facts"] = [
+            "The patient is worried about going home.",
+            {"text": "The patient feels reassured after teach-back.", "condition": {"teach_back_complete": True}},
+            {"fact": "A fact with an unusable condition.", "when": "always"},
+            {"unexpected": "ignored"},
+        ]
+        candidate["initial_state"]["teach_back_complete"] = False
+        model = FakeModel([json.dumps(candidate)])
+
+        result = generate_scenario_draft(
+            self.base,
+            "Create a fictional discharge scenario focused on accessible communication and teach-back.",
+            "PAT-005",
+            model=model,
+        )
+
+        self.assertIsNotNone(result.case)
+        self.assertEqual(
+            result.case["dialogue"]["facts"],
+            [
+                {"fact": "The patient is worried about going home.", "when": {}},
+                {
+                    "fact": "The patient feels reassured after teach-back.",
+                    "when": {"teach_back_complete": True},
+                },
+                {"fact": "A fact with an unusable condition.", "when": {}},
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
