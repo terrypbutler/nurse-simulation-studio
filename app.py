@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from html import escape
+import hmac
 import json
 import os
 
@@ -18,7 +19,8 @@ from modules.patient_dialogue import (
     authored_dialogue_fallback,
     generate_interaction_evaluation,
 )
-from modules.scenario_repository import ScenarioLibraryError
+from modules.scenario_publisher import ScenarioPublishError, publish_scenario
+from modules.scenario_repository import ScenarioLibraryError, validate_scenario_library
 from modules.simulation_engine import (
     add_learner_action,
     apply_action,
@@ -71,6 +73,36 @@ SCENARIO_LIBRARY_URL, SCENARIO_LIBRARY_TOKEN = get_scenario_settings()
 CASES, SCENARIO_SOURCE_LABEL, SCENARIO_SOURCE_NOTICE = get_cases(
     SCENARIO_LIBRARY_URL, SCENARIO_LIBRARY_TOKEN
 )
+
+
+def get_authoring_settings() -> tuple[str, str, str, str, str]:
+    """Read private editor and shared-library publishing settings."""
+
+    password = get_secret("SCENARIO_EDITOR_PASSWORD") or os.environ.get(
+        "SCENARIO_EDITOR_PASSWORD", ""
+    ).strip()
+    repository = get_secret("SCENARIO_GITHUB_REPOSITORY") or os.environ.get(
+        "SCENARIO_GITHUB_REPOSITORY", "terrypbutler/nursing-scenario-library"
+    ).strip()
+    branch = get_secret("SCENARIO_GITHUB_BRANCH") or os.environ.get(
+        "SCENARIO_GITHUB_BRANCH", "main"
+    ).strip()
+    directory = get_secret("SCENARIO_GITHUB_DIRECTORY") or os.environ.get(
+        "SCENARIO_GITHUB_DIRECTORY", "scenarios"
+    ).strip()
+    token = get_secret("SCENARIO_GITHUB_TOKEN") or os.environ.get(
+        "SCENARIO_GITHUB_TOKEN", ""
+    ).strip()
+    return password, repository, branch, directory, token
+
+
+def _lines(value: str) -> list[str]:
+    return [line.strip() for line in value.splitlines() if line.strip()]
+
+
+def _next_case_id() -> str:
+    numbers = [int(case["case_id"].split("-")[1]) for case in CASES]
+    return f"PAT-{max(numbers, default=0) + 1:03d}"
 
 
 def apply_styles() -> None:
@@ -775,6 +807,298 @@ def render_debrief(facilitator_mode: bool) -> None:
     )
 
 
+def render_scenario_editor() -> None:
+    st.title("Scenario editor")
+    st.caption(
+        "Create or update a fictional case, validate it, then publish it to the shared scenario library."
+    )
+    password, repository, branch, directory, github_token = get_authoring_settings()
+    if not password:
+        st.warning("The editor is disabled until SCENARIO_EDITOR_PASSWORD is set in secrets.")
+        return
+
+    if not st.session_state.get("scenario_editor_authenticated"):
+        entered = st.text_input("Editor password", type="password")
+        if st.button("Unlock editor", type="primary"):
+            if hmac.compare_digest(entered, password):
+                st.session_state.scenario_editor_authenticated = True
+                st.rerun()
+            st.error("Incorrect editor password.")
+        return
+
+    lock_left, lock_right = st.columns([4, 1])
+    lock_left.success("Editor unlocked")
+    if lock_right.button("Lock editor", use_container_width=True):
+        st.session_state.scenario_editor_authenticated = False
+        st.session_state.pop("validated_scenario", None)
+        st.rerun()
+
+    mode = st.radio("Change type", ("Edit existing", "Create new"), horizontal=True)
+    selected_id = st.selectbox(
+        "Starting scenario",
+        [case["case_id"] for case in CASES],
+        format_func=lambda value: f"{value} — {case_by_id(CASES, value)['title']}",
+    )
+    original = case_by_id(CASES, selected_id)
+    new_case = mode == "Create new"
+    suggested_id = _next_case_id() if new_case else original["case_id"]
+
+    with st.form(f"scenario_editor:{mode}:{selected_id}"):
+        st.subheader("Overview")
+        overview_left, overview_right = st.columns(2)
+        with overview_left:
+            case_id = st.text_input("Scenario ID", value=suggested_id, disabled=not new_case)
+            title = st.text_input("Title", value=original["title"])
+            setting = st.text_input("Setting", value=original["setting"])
+            complexity_values = ("introductory", "intermediate")
+            complexity = st.selectbox(
+                "Complexity",
+                complexity_values,
+                index=complexity_values.index(original["complexity"]),
+            )
+        with overview_right:
+            duration = st.number_input(
+                "Suggested duration (minutes)",
+                min_value=5,
+                max_value=60,
+                value=int(original["estimated_duration_minutes"]),
+                step=1,
+            )
+            version = st.text_input(
+                "Scenario version", value="1.0.0" if new_case else original["scenario_version"]
+            )
+            status_values = ("development", "approved")
+            default_status = "development" if new_case else original["publication_status"]
+            publication_status = st.selectbox(
+                "Publication status",
+                status_values,
+                index=status_values.index(default_status),
+                help="Keep new or unreviewed cases in development.",
+            )
+
+        patient_tab, learning_tab, prebrief_tab, workflow_tab, dialogue_tab = st.tabs(
+            ("Patient", "Learning", "Prebrief", "Clinical workflow", "Dialogue & review")
+        )
+        patient = original["patient"]
+        with patient_tab:
+            patient_left, patient_right = st.columns(2)
+            with patient_left:
+                display_name = st.text_input("Display name", value=patient["display_name"])
+                age = st.number_input("Age", min_value=18, max_value=120, value=int(patient["age"]))
+                pronouns = st.text_input("Pronouns", value=patient["pronouns"])
+                preferred_address = st.text_input(
+                    "Preferred form of address", value=patient["preferred_address"]
+                )
+                dialogue_style = st.text_area("Dialogue style", value=patient["dialogue_style"])
+            with patient_right:
+                communication_needs = st.text_area(
+                    "Communication needs — one per line",
+                    value="\n".join(patient["communication_needs"]),
+                )
+                explicit_preferences = st.text_area(
+                    "Patient preferences — one per line",
+                    value="\n".join(patient["explicit_preferences"]),
+                )
+                nonverbal_palette = st.text_area(
+                    "Non-verbal cues — one per line",
+                    value="\n".join(patient["nonverbal_palette"]),
+                    height=150,
+                )
+
+        with learning_tab:
+            outcomes = st.text_area(
+                "Learning outcomes — one per line",
+                value="\n".join(original["learning"]["outcomes"]),
+                height=160,
+            )
+            nmc_platforms = st.text_area(
+                "NMC platforms — one per line",
+                value="\n".join(original["learning"]["nmc_platforms"]),
+                height=130,
+            )
+            debrief_prompts = st.text_area(
+                "Debrief questions — one per line",
+                value="\n".join(original["debrief"]["prompts"]),
+                height=150,
+            )
+
+        prebrief = original["prebrief"]
+        with prebrief_tab:
+            role = st.text_area("Learner role", value=prebrief["role"])
+            orientation = st.text_area("Orientation", value=prebrief["orientation"])
+            prebrief_left, prebrief_right = st.columns(2)
+            with prebrief_left:
+                resources = st.text_area(
+                    "Available resources — one per line", value="\n".join(prebrief["resources"])
+                )
+                limitations = st.text_area(
+                    "Simulation limitations — one per line",
+                    value="\n".join(prebrief["limitations"]),
+                )
+            with prebrief_right:
+                ground_rules = st.text_area(
+                    "Learning agreement — one per line",
+                    value="\n".join(prebrief["ground_rules"]),
+                    height=190,
+                )
+
+        with workflow_tab:
+            st.info(
+                "These JSON sections control deterministic behaviour. State keys used in actions, "
+                "timed events and the AI contract must agree."
+            )
+            clinical_raw = st.text_area(
+                "Clinical context (JSON)", json.dumps(original["clinical"], indent=2), height=280
+            )
+            workspace_raw = st.text_area(
+                "Clinical workspace (JSON)",
+                json.dumps(original["clinical_workspace"], indent=2),
+                height=300,
+            )
+            initial_state_raw = st.text_area(
+                "Initial state (JSON)", json.dumps(original["initial_state"], indent=2), height=260
+            )
+            time_events_raw = st.text_area(
+                "Timed events (JSON)", json.dumps(original["time_events"], indent=2), height=300
+            )
+            actions_raw = st.text_area(
+                "Learner actions (JSON)", json.dumps(original["allowed_actions"], indent=2), height=380
+            )
+
+        with dialogue_tab:
+            dialogue_raw = st.text_area(
+                "Patient dialogue and action phrases (JSON)",
+                json.dumps(original["dialogue"], indent=2),
+                height=380,
+            )
+            ai_contract_raw = st.text_area(
+                "AI safety contract (JSON)",
+                json.dumps(original["ai_contract"], indent=2),
+                height=280,
+            )
+            facilitator_raw = st.text_area(
+                "Facilitator-only guidance (JSON)",
+                json.dumps(original["facilitator_only"], indent=2),
+                height=240,
+            )
+            rubric_raw = st.text_area(
+                "Educator rubric (JSON)",
+                json.dumps(original["educator_rubric"], indent=2),
+                height=300,
+            )
+            review_default = (
+                {"status": "pending_local_clinical_review", "reviewer": "", "reviewed_at": ""}
+                if new_case
+                else original["review"]
+            )
+            review_raw = st.text_area(
+                "Review record (JSON)", json.dumps(review_default, indent=2), height=150
+            )
+
+        validate_clicked = st.form_submit_button(
+            "Validate scenario", type="primary", use_container_width=True
+        )
+
+    if validate_clicked:
+        try:
+            draft = deepcopy(original)
+            draft.update(
+                {
+                    "case_id": case_id.strip(),
+                    "title": title.strip(),
+                    "setting": setting.strip(),
+                    "complexity": complexity,
+                    "estimated_duration_minutes": int(duration),
+                    "scenario_version": version.strip(),
+                    "publication_status": publication_status,
+                    "patient": {
+                        "display_name": display_name.strip(),
+                        "age": int(age),
+                        "pronouns": pronouns.strip(),
+                        "preferred_address": preferred_address.strip(),
+                        "communication_needs": _lines(communication_needs),
+                        "explicit_preferences": _lines(explicit_preferences),
+                        "dialogue_style": dialogue_style.strip(),
+                        "nonverbal_palette": _lines(nonverbal_palette),
+                    },
+                    "learning": {
+                        "outcomes": _lines(outcomes),
+                        "nmc_platforms": _lines(nmc_platforms),
+                    },
+                    "prebrief": {
+                        "role": role.strip(),
+                        "orientation": orientation.strip(),
+                        "resources": _lines(resources),
+                        "limitations": _lines(limitations),
+                        "ground_rules": _lines(ground_rules),
+                    },
+                    "clinical": json.loads(clinical_raw),
+                    "clinical_workspace": json.loads(workspace_raw),
+                    "initial_state": json.loads(initial_state_raw),
+                    "time_events": json.loads(time_events_raw),
+                    "allowed_actions": json.loads(actions_raw),
+                    "dialogue": json.loads(dialogue_raw),
+                    "ai_contract": json.loads(ai_contract_raw),
+                    "facilitator_only": json.loads(facilitator_raw),
+                    "educator_rubric": json.loads(rubric_raw),
+                    "review": json.loads(review_raw),
+                    "debrief": {
+                        "prompts": _lines(debrief_prompts),
+                        "automatic_competence_decision": False,
+                    },
+                }
+            )
+            candidate_cases = deepcopy(CASES)
+            if new_case:
+                candidate_cases.append(draft)
+            else:
+                candidate_cases = [
+                    draft if case["case_id"] == selected_id else case for case in candidate_cases
+                ]
+            validate_scenario_library({"schema_version": "0.2.0", "cases": candidate_cases})
+            st.session_state.validated_scenario = draft
+            st.success(f"{draft['case_id']} passed the Studio's scenario safety checks.")
+        except (json.JSONDecodeError, ScenarioLibraryError, KeyError, TypeError, ValueError) as exc:
+            st.session_state.pop("validated_scenario", None)
+            st.error(f"The scenario needs correction: {exc}")
+
+    validated_case = st.session_state.get("validated_scenario")
+    if validated_case:
+        source = json.dumps(validated_case, indent=2, ensure_ascii=False) + "\n"
+        st.download_button(
+            "Download validated scenario source",
+            data=source,
+            file_name=f"{validated_case['case_id']}.yaml",
+            mime="application/yaml",
+            use_container_width=True,
+            help="JSON is valid YAML and can be placed directly in the library's scenarios folder.",
+        )
+        if github_token:
+            if st.button("Publish to shared scenario library", type="primary", use_container_width=True):
+                try:
+                    commit_url = publish_scenario(
+                        repository,
+                        branch,
+                        github_token,
+                        validated_case,
+                        scenario_directory=directory,
+                    )
+                    get_cases.clear()
+                    st.success(
+                        "Published to the source library. Its validation workflow will rebuild the "
+                        "public library automatically."
+                    )
+                    if commit_url:
+                        st.link_button("View published change", commit_url)
+                except (ScenarioPublishError, ScenarioLibraryError) as exc:
+                    st.error(str(exc))
+        else:
+            st.info(
+                "The validated download is ready. Add SCENARIO_GITHUB_TOKEN in secrets to enable "
+                "one-click publishing."
+            )
+
+
 def render_about() -> None:
     st.title("Safety and scope")
     safety_banner()
@@ -815,7 +1139,14 @@ with st.sidebar:
     st.caption("Canonical simulation prototype · v0.3")
     page = st.radio(
         "Navigation",
-        ["Home", "Patient library", "Run simulation", "Debrief", "Safety & scope"],
+        [
+            "Home",
+            "Patient library",
+            "Run simulation",
+            "Debrief",
+            "Scenario editor",
+            "Safety & scope",
+        ],
         label_visibility="collapsed",
     )
     FACILITATOR_MODE = st.toggle(
@@ -845,5 +1176,7 @@ elif page == "Run simulation":
     render_simulation(FACILITATOR_MODE)
 elif page == "Debrief":
     render_debrief(FACILITATOR_MODE)
+elif page == "Scenario editor":
+    render_scenario_editor()
 else:
     render_about()

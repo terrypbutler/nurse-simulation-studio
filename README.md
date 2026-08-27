@@ -63,6 +63,8 @@ py .\sample_patients\validate_cases.py
 - Independently published, validated scenario library
 - Portable prebriefs, workspaces, rubrics, dialogue facts and action matching
 - Five-minute scenario cache with a manual refresh and bundled safe fallback
+- Password-protected scenario editor with guided authoring fields
+- Validated download and one-click publishing to the shared scenario library
 
 The cases remain development fixtures until reviewed and approved through the
 appropriate nursing-education and local clinical-governance processes.
@@ -80,6 +82,34 @@ The Studio accepts HTTPS JSON only, limits its size, validates every scenario
 and falls back to its bundled development cases if the external library is
 unavailable or unsafe. New scenario content is authored in the separate
 `nursing-scenario-library` repository rather than in this application.
+
+## Edit shared scenarios in the Studio
+
+The **Scenario editor** page lets an authorised educator edit an existing case
+or duplicate one to create a new case. Patient details, learning outcomes,
+prebriefing and debrief questions use guided fields; deterministic state,
+actions, dialogue matching and clinical workspace content remain visible as
+structured JSON. The Studio validates the complete candidate library before a
+scenario can be downloaded or published.
+
+One-click publishing writes the validated scenario into the source
+`scenarios/` directory of `nursing-scenario-library`. That repository's existing
+GitHub workflow performs its full schema checks, rebuilds `library.json` and
+publishes it through GitHub Pages. Add these server-side secrets locally or in
+Streamlit Community Cloud:
+
+```toml
+SCENARIO_EDITOR_PASSWORD = "a-long-password-shared-only-with-editors"
+SCENARIO_GITHUB_REPOSITORY = "terrypbutler/nursing-scenario-library"
+SCENARIO_GITHUB_BRANCH = "main"
+SCENARIO_GITHUB_DIRECTORY = "scenarios"
+SCENARIO_GITHUB_TOKEN = "a-fine-grained-token-with-contents-write-access"
+```
+
+The token needs write access to repository contents. Never commit the real
+token or password. Learners and public visitors need neither value. After the
+library workflow finishes, use **Refresh scenario library** to bypass the
+Studio's five-minute cache.
 
 Action suitability uses five educator-reviewable dimensions: patient-centredness,
 effectiveness and relevance, safety and timing, consent and dignity, and
