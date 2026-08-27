@@ -127,6 +127,22 @@ class SimulationEngineTests(unittest.TestCase):
         )
         self.assertIsNone(match_action_id(self.case, "I will take a blood sample."))
 
+    def test_identity_and_medication_wording_match_without_scripted_phrases(self):
+        self.assertEqual(
+            match_action_id(
+                self.case,
+                "Check that Mrs Shaw says who she is and she is ready to chat.",
+            ),
+            "check_identity",
+        )
+        self.assertEqual(
+            match_action_id(
+                self.case,
+                "Check to see what medications she is on at the moment.",
+            ),
+            "check_allergies_and_prescription",
+        )
+
     def test_unmatched_action_is_logged_without_clinical_change(self):
         original_state = deepcopy(self.session["state"])
         result = add_learner_action(self.case, self.session, "I will tidy the bedside table.")

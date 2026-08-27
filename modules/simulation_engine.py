@@ -20,6 +20,32 @@ from modules.simulation_content import (
 
 DATA_PATH = DEFAULT_LOCAL_LIBRARY
 PRACTICE_MODES = {"coached", "immersive"}
+GENERIC_ACTION_PHRASES = {
+    "check_identity": (
+        "confirm details",
+        "tell me who you are",
+        "say who you are",
+        "says who she is",
+        "says who he is",
+        "check who she is",
+        "check who he is",
+        "name and date of birth",
+        "confirm your name",
+        "check patient details",
+    ),
+    "check_allergies_and_prescription": (
+        "check current medications",
+        "check current medicines",
+        "check what medications",
+        "check what medicines",
+        "medications currently taking",
+        "medicines currently taking",
+        "medications she is on",
+        "medications he is on",
+        "medicines she is on",
+        "medicines he is on",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -200,7 +226,12 @@ def match_action_id(case: dict[str, Any], text: str) -> str | None:
     allowed_ids = {action["action_id"] for action in case["allowed_actions"]}
     candidates: list[tuple[int, str]] = []
 
-    for action_id, phrases in action_phrases(case).items():
+    authored_phrases = action_phrases(case)
+    for action_id in allowed_ids:
+        phrases = [
+            *authored_phrases.get(action_id, []),
+            *GENERIC_ACTION_PHRASES.get(action_id, ()),
+        ]
         if action_id not in allowed_ids:
             continue
         best_score = 0
@@ -291,7 +322,11 @@ def add_learner_action(
 
 
 def record_unmapped_action(
-    case: dict[str, Any], session: dict[str, Any], text: str, minutes: int = 2
+    case: dict[str, Any],
+    session: dict[str, Any],
+    text: str,
+    minutes: int = 2,
+    supportive: bool = False,
 ) -> ActionResult:
     """Record an action that has no safe deterministic state transition."""
 
@@ -313,7 +348,12 @@ def record_unmapped_action(
         {
             "role": "cue",
             "speaker": "Scenario response",
-            "text": "No new clinical information is revealed by that action.",
+            "text": (
+                "The supportive action is acknowledged, but it does not complete an "
+                "authored pathway step."
+                if supportive
+                else "The action is acknowledged, but it does not complete an authored pathway step."
+            ),
             "minute": session["state"]["elapsed_minutes"],
         }
     )
@@ -326,7 +366,12 @@ def record_unmapped_action(
         }
     )
     fired = _resolve_due_events(case, session)
-    return ActionResult(True, "The action was recorded without changing clinical facts.", (), fired)
+    return ActionResult(
+        True,
+        "The action was recorded without changing clinical facts.",
+        (),
+        fired,
+    )
 
 
 def add_learner_dialogue(

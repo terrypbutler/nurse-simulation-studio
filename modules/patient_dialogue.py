@@ -90,8 +90,33 @@ def action_requires_explicit_description(action: dict[str, Any]) -> bool:
     return any(marker in searchable for marker in markers)
 
 
+def recognised_action_can_apply(
+    assessment: ActionAssessment,
+    action: dict[str, Any],
+    confidence: float,
+    evidence_source: str,
+    action_text: str,
+) -> bool:
+    """Separate semantic occurrence from formative quality scoring."""
+
+    if not assessment.generated or confidence < ACTION_MAPPING_CONFIDENCE:
+        return False
+    if assessment.relevance_category == "counterproductive":
+        return False
+    if action_requires_explicit_description(action):
+        return bool(action_text.strip()) and evidence_source in {
+            "proposed_action",
+            "both",
+        }
+    return True
+
+
 def authored_dialogue_fallback(case: dict[str, Any], session: dict[str, Any]) -> str:
-    prior = sum(1 for item in session["transcript"] if item["role"] == "learner_dialogue")
+    prior = sum(
+        1
+        for item in session["transcript"]
+        if str(item.get("role", "")).startswith("learner")
+    )
     return free_text_response(case, prior)
 
 

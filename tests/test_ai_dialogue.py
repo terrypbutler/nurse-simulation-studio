@@ -4,11 +4,14 @@ import unittest
 
 from modules import ai_client
 from modules.patient_dialogue import (
+    ActionAssessment,
     action_requires_explicit_description,
     assess_interaction_actions,
     assess_proposed_action,
+    authored_dialogue_fallback,
     generate_interaction_evaluation,
     generate_patient_reply,
+    recognised_action_can_apply,
 )
 from modules.simulation_engine import (
     add_learner_dialogue,
@@ -16,6 +19,7 @@ from modules.simulation_engine import (
     case_by_id,
     load_cases,
     new_session,
+    record_unmapped_action,
     record_learner_dialogue,
     remove_latest_patient_response,
     replace_latest_patient_response,
@@ -348,6 +352,67 @@ class PatientDialogueTests(unittest.TestCase):
             assessment.matched_action_ids,
             ("administer_charted_option",),
         )
+
+    def test_recognised_action_can_apply_even_when_formative_score_is_low(self):
+        assessment = ActionAssessment(
+            "check_identity",
+            2,
+            "concerning",
+            "direct",
+            0.92,
+            "The wording is impersonal, but an identity check is clearly performed.",
+            True,
+        )
+        action = next(
+            item
+            for item in self.case["allowed_actions"]
+            if item["action_id"] == "check_identity"
+        )
+        self.assertTrue(
+            recognised_action_can_apply(
+                assessment,
+                action,
+                0.92,
+                "spoken_words",
+                "",
+            )
+        )
+
+    def test_counterproductive_action_does_not_apply_from_semantic_match(self):
+        assessment = ActionAssessment(
+            "check_identity",
+            1,
+            "clearly_concerning",
+            "counterproductive",
+            0.95,
+            "The action conflicts with dignity and safety.",
+            True,
+        )
+        action = next(
+            item
+            for item in self.case["allowed_actions"]
+            if item["action_id"] == "check_identity"
+        )
+        self.assertFalse(
+            recognised_action_can_apply(
+                assessment,
+                action,
+                0.95,
+                "both",
+                "I check identity.",
+            )
+        )
+
+    def test_action_only_turn_advances_authored_fallback_reply(self):
+        first = authored_dialogue_fallback(self.case, self.session)
+        record_unmapped_action(
+            self.case,
+            self.session,
+            "I wait quietly for a moment.",
+            supportive=True,
+        )
+        second = authored_dialogue_fallback(self.case, self.session)
+        self.assertNotEqual(first, second)
 
     def test_reasonable_unbounded_action_can_be_scored_without_state_mapping(self):
         class FakeModel:

@@ -25,6 +25,7 @@ from modules.patient_dialogue import (
     assess_interaction_actions,
     authored_dialogue_fallback,
     generate_interaction_evaluation,
+    recognised_action_can_apply,
 )
 from modules.scenario_publisher import ScenarioPublishError, publish_scenario
 from modules.scenario_repository import ScenarioLibraryError, validate_scenario_library
@@ -548,10 +549,11 @@ def render_simulation(facilitator_mode: bool) -> None:
         end_session(session)
         st.rerun()
 
-    left, right = st.columns([1.25, 1])
-    with left:
-        render_state(case, session, facilitator_mode)
-    with right:
+    transcript_col, interaction_col = st.columns([1.35, 1])
+    with transcript_col:
+        with st.container(height=720, border=True):
+            render_transcript(session)
+    with interaction_col:
         st.subheader("Plan your interaction")
         st.caption(
             "Speak naturally: conversational actions can be recognised from your words, "
@@ -612,17 +614,19 @@ def render_simulation(facilitator_mode: bool) -> None:
                     )
                     for action_id, confidence, evidence_source in candidates:
                         action = action_lookup[action_id]
-                        if confidence < ACTION_MAPPING_CONFIDENCE:
-                            continue
-                        if action_assessment.suitability_score < 4:
-                            continue
-                        if (
-                            action_requires_explicit_description(action)
-                            and (
-                                not action_clean
-                                or evidence_source not in {"proposed_action", "both"}
-                            )
+                        if not recognised_action_can_apply(
+                            action_assessment,
+                            action,
+                            confidence,
+                            evidence_source,
+                            action_clean,
                         ):
+                            if (
+                                confidence >= ACTION_MAPPING_CONFIDENCE
+                                and action_assessment.relevance_category
+                                == "counterproductive"
+                            ):
+                                blocked_messages.append(canonical_reply)
                             continue
                         action_result = apply_action(
                             case,
@@ -711,7 +715,15 @@ def render_simulation(facilitator_mode: bool) -> None:
                         st.info(observation_set.notice)
                 elif action_clean:
                     if AI_READY:
-                        action_result = record_unmapped_action(case, session, action_clean)
+                        action_result = record_unmapped_action(
+                            case,
+                            session,
+                            action_clean,
+                            supportive=bool(
+                                action_assessment
+                                and action_assessment.relevance_category == "supportive"
+                            ),
+                        )
                     else:
                         action_result = add_learner_action(case, session, action_clean)
                     if not action_result.applied:
@@ -871,7 +883,7 @@ def render_simulation(facilitator_mode: bool) -> None:
             )
 
     st.divider()
-    render_transcript(session)
+    render_state(case, session, facilitator_mode)
     if session["status"] == "ended":
         st.success("Simulation ended. Open Debrief from the navigation to reflect and export.")
 
