@@ -1,0 +1,117 @@
+"""Turn an educator's plain-language brief into a validated scenario draft."""
+
+from __future__ import annotations
+
+from copy import deepcopy
+from dataclasses import dataclass
+import json
+from typing import Any
+
+from modules import ai_client
+from modules.scenario_repository import ScenarioLibraryError, validate_scenario_library
+
+
+@dataclass(frozen=True)
+class AuthoringResult:
+    case: dict[str, Any] | None
+    error: str = ""
+
+
+def _clean_json(text: str) -> dict[str, Any]:
+    clean = text.strip().replace("```json", "").replace("```", "").strip()
+    payload = json.loads(clean)
+    if "scenario" in payload and isinstance(payload["scenario"], dict):
+        payload = payload["scenario"]
+    if not isinstance(payload, dict):
+        raise ValueError("AI did not return a scenario object.")
+    return payload
+
+
+def _deep_merge(base: Any, candidate: Any) -> Any:
+    """Keep required template structure when a model omits an unchanged field."""
+
+    if not isinstance(base, dict) or not isinstance(candidate, dict):
+        return deepcopy(candidate)
+    result = deepcopy(base)
+    for key, value in candidate.items():
+        result[key] = _deep_merge(result[key], value) if key in result else deepcopy(value)
+    return result
+
+
+def _invariants(candidate: dict[str, Any], base: dict[str, Any], case_id: str) -> dict[str, Any]:
+    result = _deep_merge(base, candidate)
+    result["case_id"] = case_id
+    result["synthetic_data_notice"] = "Entirely fictional training case"
+    result["field"] = "adult nursing"
+    result["publication_status"] = base.get("publication_status", "development")
+    result["scenario_version"] = base.get("scenario_version", "1.0.0")
+    result["review"] = deepcopy(base.get("review", {}))
+    result.setdefault("debrief", {})["automatic_competence_decision"] = False
+    return result
+
+
+def _prompt(base: dict[str, Any], request: str, case_id: str) -> str:
+    return """You are helping a nursing educator author one entirely fictional adult-nursing simulation.
+
+Transform the educator's ordinary-language request into a complete scenario JSON object. Use the supplied scenario as the exact structural template: preserve every top-level section and all required nested shapes, but adapt the educational content to the request. Return the scenario object only as valid JSON.
+
+Authoring rules:
+- This is a development draft, not clinical guidance or an approved curriculum.
+- Never include real patient data or direct identifiers.
+- Never provide medicine doses. Prescription fixtures may contain only order_id, display_text and dose_source; dose_source must refer to the simulated prescription chart.
+- Clinical, consent and patient-experience changes must be deterministic effects under allowed_actions or time_events.
+- Every allowed action needs a matching dialogue.action_responses entry and dialogue.action_phrases list.
+- Use clear snake_case IDs. Preconditions and effects must refer to keys in initial_state.
+- ai_contract.allowed_state_keys must contain only keys in initial_state.
+- AI must be prohibited from generating observations, diagnoses, treatment effects and judgements.
+- Include at least three educator rubric criteria. Do not make a competence decision.
+- Keep the case focused enough for a 10-25 minute supervised rehearsal.
+
+Required case ID: """ + case_id + """
+
+EDUCATOR REQUEST:
+""" + request + """
+
+STRUCTURAL TEMPLATE JSON:
+""" + json.dumps(base, ensure_ascii=False)
+
+
+def _generate(model: Any, prompt: str) -> dict[str, Any]:
+    response = model.generate_content(
+        prompt,
+        generation_config={"response_mime_type": "application/json"},
+    )
+    return _clean_json(getattr(response, "text", ""))
+
+
+def generate_scenario_draft(
+    base: dict[str, Any],
+    request: str,
+    case_id: str,
+    *,
+    model: Any = None,
+) -> AuthoringResult:
+    """Generate, harden and validate a draft, with one automatic repair attempt."""
+
+    request = " ".join(request.split())[:6000]
+    if len(request) < 30:
+        return AuthoringResult(None, "Describe the scenario in a little more detail first.")
+    active_model = model or ai_client.GenerativeModel(ai_client.AUTHORING_MODEL)
+    prompt = _prompt(base, request, case_id)
+    try:
+        candidate = _invariants(_generate(active_model, prompt), base, case_id)
+        validate_scenario_library({"schema_version": "0.2.0", "cases": [candidate]})
+        return AuthoringResult(candidate)
+    except Exception as first:
+        repair = (
+            prompt
+            + "\n\nYour previous draft failed validation. Correct the issue and return the complete "
+            + f"scenario JSON only. Validation issue: {first}\nPrevious draft:\n"
+            + json.dumps(locals().get("candidate", {}), ensure_ascii=False)
+        )
+        try:
+            candidate = _invariants(_generate(active_model, repair), base, case_id)
+            validate_scenario_library({"schema_version": "0.2.0", "cases": [candidate]})
+            return AuthoringResult(candidate)
+        except Exception as second:
+            return AuthoringResult(None, f"AI could not produce a valid draft yet: {second}")

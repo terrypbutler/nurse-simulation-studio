@@ -63,7 +63,7 @@ py .\sample_patients\validate_cases.py
 - Independently published, validated scenario library
 - Portable prebriefs, workspaces, rubrics, dialogue facts and action matching
 - Five-minute scenario cache with a manual refresh and bundled safe fallback
-- Password-protected scenario editor with guided authoring fields
+- Password-protected conversational editor that turns educator briefs into validated drafts
 - Validated download and one-click publishing to the shared scenario library
 
 The cases remain development fixtures until reviewed and approved through the
@@ -85,12 +85,18 @@ unavailable or unsafe. New scenario content is authored in the separate
 
 ## Edit shared scenarios in the Studio
 
-The **Scenario editor** page lets an authorised educator edit an existing case
-or duplicate one to create a new case. Patient details, learning outcomes,
-prebriefing and debrief questions use guided fields; deterministic state,
-actions, dialogue matching and clinical workspace content remain visible as
-structured JSON. The Studio validates the complete candidate library before a
-scenario can be downloaded or published.
+The **Scenario editor** page lets an authorised educator describe a new learning
+encounter—or changes to an existing one—in ordinary language. It asks about the
+fictional patient, learning purpose, opening situation, expected learner actions,
+timed consequences and debrief. The selected AI provider turns those answers
+into the complete Studio format, validates it, shows an educator-readable
+summary and accepts further plain-language revisions. Technical JSON is hidden
+in an optional review panel, and the original structured editor remains
+available for advanced users.
+
+AI output is always marked as a development draft. Structural validation is not
+clinical approval: an educator must review every fact, prerequisite, state
+transition, patient response and debrief item before publishing or use.
 
 One-click publishing writes the validated scenario into the source
 `scenarios/` directory of `nursing-scenario-library`. That repository's existing

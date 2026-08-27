@@ -21,6 +21,7 @@ from modules.patient_dialogue import (
 )
 from modules.scenario_publisher import ScenarioPublishError, publish_scenario
 from modules.scenario_repository import ScenarioLibraryError, validate_scenario_library
+from modules.scenario_authoring import generate_scenario_draft
 from modules.simulation_engine import (
     add_learner_action,
     apply_action,
@@ -807,8 +808,8 @@ def render_debrief(facilitator_mode: bool) -> None:
     )
 
 
-def render_scenario_editor() -> None:
-    st.title("Scenario editor")
+def render_structured_scenario_editor() -> None:
+    st.title("Advanced structured editor")
     st.caption(
         "Create or update a fictional case, validate it, then publish it to the shared scenario library."
     )
@@ -1097,6 +1098,262 @@ def render_scenario_editor() -> None:
                 "The validated download is ready. Add SCENARIO_GITHUB_TOKEN in secrets to enable "
                 "one-click publishing."
             )
+
+
+def _unlock_human_editor() -> bool:
+    password, _, _, _, _ = get_authoring_settings()
+    if not password:
+        st.warning("The editor is disabled until SCENARIO_EDITOR_PASSWORD is set in secrets.")
+        return False
+    if st.session_state.get("scenario_editor_authenticated"):
+        return True
+    entered = st.text_input("Editor password", type="password", key="human_editor_password")
+    if st.button("Unlock editor", type="primary", key="human_editor_unlock"):
+        if hmac.compare_digest(entered, password):
+            st.session_state.scenario_editor_authenticated = True
+            st.rerun()
+        st.error("Incorrect editor password.")
+    return False
+
+
+def _candidate_library(draft: dict, original_id: str, creating: bool) -> dict:
+    cases = deepcopy(CASES)
+    if creating:
+        cases.append(draft)
+    else:
+        cases = [draft if case["case_id"] == original_id else case for case in cases]
+    return {"schema_version": "0.2.0", "cases": cases}
+
+
+def _show_draft_summary(draft: dict) -> None:
+    st.subheader(f"Draft: {draft['patient']['display_name']} · {draft['title']}")
+    summary = st.columns(3)
+    summary[0].metric("Scenario", draft["case_id"])
+    summary[1].metric("Setting", draft["setting"].title())
+    summary[2].metric("Duration", f"{draft['estimated_duration_minutes']} min")
+    st.write(draft["clinical"]["presenting_context"])
+    left, right = st.columns(2)
+    with left:
+        st.markdown("**Learning outcomes**")
+        for outcome in draft["learning"]["outcomes"]:
+            st.markdown(f"- {outcome}")
+    with right:
+        st.markdown("**Learner actions created**")
+        for action in draft["allowed_actions"]:
+            st.markdown(f"- {action['label']}")
+    st.warning(
+        "This is an AI-authored development draft. An educator must review every clinical fact, "
+        "state transition, action prerequisite and patient response before publication or use."
+    )
+    with st.expander("Technical preview for detailed review", expanded=False):
+        st.json(draft)
+
+
+def render_scenario_editor() -> None:
+    experience = st.radio(
+        "Editor experience",
+        ("AI-guided conversation", "Advanced structured editor"),
+        horizontal=True,
+        help="The guided editor turns plain-language educational ideas into the Studio format.",
+    )
+    if experience == "Advanced structured editor":
+        render_structured_scenario_editor()
+        return
+
+    st.title("AI-guided scenario editor")
+    st.caption("Tell the Studio about the learning encounter in ordinary language.")
+    safety_banner()
+    if not _unlock_human_editor():
+        return
+
+    if not AI_READY:
+        st.info(
+            "Choose an AI provider in the sidebar and configure its API key to build scenarios. "
+            "The advanced structured editor remains available without AI."
+        )
+        return
+
+    top_left, top_right = st.columns([4, 1])
+    with top_left:
+        st.success("Editor unlocked · AI authoring is ready")
+    with top_right:
+        if st.button("Start over", use_container_width=True):
+            for key in ("authoring_draft", "authoring_history", "authoring_context"):
+                st.session_state.pop(key, None)
+            st.rerun()
+
+    change_type = st.radio("What would you like to do?", ("Create a new scenario", "Change a scenario"), horizontal=True)
+    creating = change_type == "Create a new scenario"
+    selected_id = st.selectbox(
+        "Use this scenario as the starting point" if creating else "Scenario to change",
+        [case["case_id"] for case in CASES],
+        format_func=lambda value: f"{value} — {case_by_id(CASES, value)['title']}",
+    )
+    original = case_by_id(CASES, selected_id)
+    target_id = _next_case_id() if creating else selected_id
+    current_context = f"{'new' if creating else 'edit'}:{selected_id}"
+    prior_context = st.session_state.get("authoring_context")
+    if prior_context and prior_context != current_context:
+        st.session_state.pop("authoring_draft", None)
+        st.session_state.pop("authoring_history", None)
+        st.session_state.authoring_context = current_context
+
+    history = st.session_state.get("authoring_history", [])
+    for item in history:
+        with st.chat_message(item["role"]):
+            st.write(item["text"])
+
+    if not history:
+        with st.chat_message("assistant"):
+            st.write(
+                "Describe the encounter as you would to another educator. I’ll turn it into the "
+                "patient profile, learner pathway, dialogue, timed changes and debrief structure."
+            )
+
+    if creating:
+        with st.form("human_scenario_brief"):
+            purpose = st.text_area(
+                "What should the learner practise?",
+                placeholder="For example: recognising deterioration, communicating with a distressed relative, or supporting informed choice…",
+            )
+            patient_idea = st.text_area(
+                "Tell us about the fictional patient",
+                placeholder="Approximate age, situation, preferences, communication needs and how they may feel…",
+            )
+            encounter = st.text_area(
+                "What is happening when the learner arrives?",
+                placeholder="Setting, handover, visible cues and information or resources available…",
+            )
+            pathway = st.text_area(
+                "What good actions should be possible, and what must happen first?",
+                placeholder="Describe the sensible sequence in everyday language. Include consent, dignity or escalation points where relevant…",
+            )
+            consequences = st.text_area(
+                "How should the patient or situation change over time?",
+                placeholder="What improves after helpful actions? What becomes visible if the learner delays?",
+            )
+            facilitator = st.text_area(
+                "What should the facilitator look for and discuss afterward?",
+                placeholder="Safety points, common mistakes, learning outcomes and debrief questions…",
+            )
+            build_clicked = st.form_submit_button(
+                "Ask AI to build the scenario", type="primary", use_container_width=True
+            )
+        request = "\n\n".join(
+            (
+                f"Learning purpose: {purpose}",
+                f"Fictional patient: {patient_idea}",
+                f"Opening encounter: {encounter}",
+                f"Expected pathway: {pathway}",
+                f"Timed changes and consequences: {consequences}",
+                f"Facilitator and debrief: {facilitator}",
+            )
+        )
+        if build_clicked and sum(
+            bool(value.strip())
+            for value in (purpose, patient_idea, encounter, pathway, consequences, facilitator)
+        ) < 3:
+            st.error("Please answer at least three of the prompts so AI has enough educational context.")
+            build_clicked = False
+        base = original
+    else:
+        st.info(
+            f"You are changing **{original['patient']['display_name']} — {original['title']}**. "
+            "Describe the result you want; you do not need to name JSON fields."
+        )
+        with st.form("human_scenario_change"):
+            request = st.text_area(
+                "What would you like to change?",
+                height=180,
+                placeholder="For example: make the patient use a hearing aid, add a privacy action before personal care, and update the debrief…",
+            )
+            build_clicked = st.form_submit_button(
+                "Ask AI to make the changes", type="primary", use_container_width=True
+            )
+        base = original
+
+    if build_clicked:
+        with st.spinner("Turning the educational brief into a validated Studio scenario…"):
+            result = generate_scenario_draft(base, request, target_id)
+        if result.case:
+            try:
+                validate_scenario_library(_candidate_library(result.case, selected_id, creating))
+                st.session_state.authoring_draft = result.case
+                st.session_state.authoring_context = current_context
+                st.session_state.authoring_history = [
+                    {"role": "user", "text": request},
+                    {
+                        "role": "assistant",
+                        "text": "I created a complete development draft and it passed the Studio's structural safety checks.",
+                    },
+                ]
+                st.rerun()
+            except ScenarioLibraryError as exc:
+                st.error(f"The draft needs another pass: {exc}")
+        else:
+            st.error(result.error)
+
+    draft = st.session_state.get("authoring_draft")
+    if not draft:
+        return
+    _show_draft_summary(draft)
+
+    with st.form("scenario_revision"):
+        revision = st.text_area(
+            "Tell AI what you would like changed",
+            placeholder="For example: make the dialogue less formal, add teach-back before discharge, or remove the timed event…",
+        )
+        revise_clicked = st.form_submit_button("Revise this draft", use_container_width=True)
+    if revise_clicked:
+        with st.spinner("Revising and checking the scenario…"):
+            result = generate_scenario_draft(draft, f"Revise the current scenario as follows: {revision}", draft["case_id"])
+        if result.case:
+            try:
+                validate_scenario_library(_candidate_library(result.case, selected_id, creating))
+                st.session_state.authoring_draft = result.case
+                st.session_state.setdefault("authoring_history", []).extend(
+                    [
+                        {"role": "user", "text": revision},
+                        {"role": "assistant", "text": "I revised the draft and validated it again."},
+                    ]
+                )
+                st.rerun()
+            except ScenarioLibraryError as exc:
+                st.error(f"The revision needs another pass: {exc}")
+        else:
+            st.error(result.error)
+
+    source = json.dumps(draft, indent=2, ensure_ascii=False) + "\n"
+    st.download_button(
+        "Download draft for review",
+        data=source,
+        file_name=f"{draft['case_id']}.yaml",
+        mime="application/yaml",
+        use_container_width=True,
+    )
+    _, repository, branch, directory, github_token = get_authoring_settings()
+    if github_token:
+        confirm_review = st.checkbox(
+            "I understand this is a development draft requiring educator and clinical review."
+        )
+        if st.button(
+            "Publish development draft to shared library",
+            type="primary",
+            use_container_width=True,
+            disabled=not confirm_review,
+        ):
+            try:
+                commit_url = publish_scenario(
+                    repository, branch, github_token, draft, scenario_directory=directory
+                )
+                get_cases.clear()
+                st.success("Published. The library workflow will validate and rebuild the public library.")
+                if commit_url:
+                    st.link_button("View published change", commit_url)
+            except (ScenarioPublishError, ScenarioLibraryError) as exc:
+                st.error(str(exc))
+    else:
+        st.info("Add SCENARIO_GITHUB_TOKEN in secrets when you want one-click publishing.")
 
 
 def render_about() -> None:

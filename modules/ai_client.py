@@ -7,6 +7,7 @@ GEMINI_PROVIDER = "Gemini"
 OPENAI_PROVIDER = "OpenAI"
 PROVIDER_OPTION_KEY = "ai_provider_option"
 DIALOGUE_MODEL = "patient-dialogue"
+AUTHORING_MODEL = "scenario-authoring"
 GEMINI_DIALOGUE_MODEL = "gemini-3.5-flash-lite"
 OPENAI_DIALOGUE_MODEL = "gpt-5.6-terra"
 
@@ -44,8 +45,8 @@ def render_provider_options() -> str:
         horizontal=True,
         key=PROVIDER_OPTION_KEY,
         help=(
-            "Interprets learner interactions and phrases synthetic-patient replies. "
-            "Clinical state and consequences remain educator-authored."
+            "Supports learner interactions, synthetic-patient replies and educator-led "
+            "scenario drafting. Clinical state changes remain deterministic."
         ),
     )
 
@@ -97,8 +98,10 @@ class GenerativeModel:
         self.model_name = model_name
 
     def generate_content(self, contents, generation_config=None):
-        if self.model_name != DIALOGUE_MODEL:
+        if self.model_name not in {DIALOGUE_MODEL, AUTHORING_MODEL}:
             raise ValueError(f"Unsupported model role: {self.model_name}")
+
+        authoring = self.model_name == AUTHORING_MODEL
 
         if _provider == OPENAI_PROVIDER:
             if _openai_client is None:
@@ -123,7 +126,7 @@ class GenerativeModel:
                 input=str(contents),
                 reasoning={"effort": "low"},
                 text=text_config,
-                max_output_tokens=350,
+                max_output_tokens=7000 if authoring else 350,
                 store=False,
             )
             return ModelResponse(text=response.output_text or "")

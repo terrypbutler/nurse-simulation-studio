@@ -73,6 +73,27 @@ class AiClientTests(unittest.TestCase):
         self.assertEqual(response.text, "A Gemini reply.")
         self.assertEqual(captured["model"], ai_client.GEMINI_DIALOGUE_MODEL)
 
+    def test_openai_authoring_role_allows_full_non_stored_json_draft(self):
+        captured = {}
+
+        class FakeResponses:
+            def create(self, **kwargs):
+                captured.update(kwargs)
+                return types.SimpleNamespace(output_text='{"scenario": {}}')
+
+        ai_client._provider = ai_client.OPENAI_PROVIDER
+        ai_client._openai_client = types.SimpleNamespace(responses=FakeResponses())
+        response = ai_client.GenerativeModel(ai_client.AUTHORING_MODEL).generate_content(
+            "authoring prompt",
+            generation_config={"response_mime_type": "application/json"},
+        )
+
+        self.assertEqual(response.text, '{"scenario": {}}')
+        self.assertFalse(captured["store"])
+        self.assertEqual(captured["reasoning"]["effort"], "low")
+        self.assertEqual(captured["max_output_tokens"], 7000)
+        self.assertEqual(captured["text"]["format"]["type"], "json_object")
+
 
 class PatientDialogueTests(unittest.TestCase):
     @classmethod
