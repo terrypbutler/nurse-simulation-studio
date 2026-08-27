@@ -49,6 +49,8 @@ py .\sample_patients\validate_cases.py
 - A clinical workspace for handover, observations, records, environment and notes
 - Free-text nursing actions with educator-authored prerequisite checks
 - AI interpretation of natural-language actions with a 1–5 suitability range
+- Dialogue-only progression for conversational actions, with bounded multi-action recognition
+- Explicit action descriptions retained for observations, administration, escalation and hands-on care
 - Direct, supportive, tangential, unclear and counterproductive relevance bands
 - Combined action-and-dialogue submission with patient-state-aware formative feedback
 - Richer bounded state for trust, emotion, fatigue, overload, understanding,
