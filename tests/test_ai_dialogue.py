@@ -4,6 +4,8 @@ import unittest
 
 from modules import ai_client
 from modules.patient_dialogue import (
+    action_requires_explicit_description,
+    assess_interaction_actions,
     assess_proposed_action,
     generate_interaction_evaluation,
     generate_patient_reply,
@@ -252,6 +254,100 @@ class PatientDialogueTests(unittest.TestCase):
         self.assertIn("Consent and dignity", captured["prompt"])
         self.assertIn("case_specific_educator_rubric", captured["prompt"])
         self.assertNotIn('"effects"', captured["prompt"])
+
+    def test_spoken_words_can_map_multiple_conversational_actions(self):
+        captured = {}
+
+        class FakeModel:
+            def generate_content(self, prompt, generation_config=None):
+                captured["prompt"] = prompt
+                captured["schema"] = generation_config["response_schema"]
+                return types.SimpleNamespace(
+                    text=(
+                        '{"matched_actions":['
+                        '{"action_id":"check_identity","confidence":0.94,'
+                        '"evidence_source":"spoken_words"},'
+                        '{"action_id":"assess_pain","confidence":0.9,'
+                        '"evidence_source":"spoken_words"}],'
+                        '"suitability_score":5,"relevance_category":"direct",'
+                        '"rationale":"The learner clearly checks identity and then explores pain."}'
+                    )
+                )
+
+        assessment = assess_interaction_actions(
+            self.case,
+            self.session,
+            dialogue_text=(
+                "Could you confirm your name and date of birth? Then tell me where "
+                "the pain is and what it feels like."
+            ),
+            model=FakeModel(),
+        )
+
+        self.assertEqual(
+            assessment.matched_action_ids,
+            ("check_identity", "assess_pain"),
+        )
+        self.assertEqual(
+            assessment.evidence_sources,
+            ("spoken_words", "spoken_words"),
+        )
+        self.assertIn("recent_learner_evidence", captured["prompt"])
+        self.assertEqual(
+            captured["schema"]["properties"]["matched_actions"]["maxItems"], 3
+        )
+
+    def test_safety_critical_action_is_rejected_from_spoken_words_alone(self):
+        class FakeModel:
+            def generate_content(self, _prompt, generation_config=None):
+                return types.SimpleNamespace(
+                    text=(
+                        '{"matched_actions":[{"action_id":"administer_charted_option",'
+                        '"confidence":0.99,"evidence_source":"proposed_action"}],'
+                        '"suitability_score":5,"relevance_category":"direct",'
+                        '"rationale":"The learner mentions giving pain relief."}'
+                    )
+                )
+
+        assessment = assess_interaction_actions(
+            self.case,
+            self.session,
+            dialogue_text="I can give you the pain relief now.",
+            model=FakeModel(),
+        )
+
+        self.assertEqual(assessment.matched_action_ids, ())
+        action = next(
+            item
+            for item in self.case["allowed_actions"]
+            if item["action_id"] == "administer_charted_option"
+        )
+        self.assertTrue(action_requires_explicit_description(action))
+
+    def test_safety_critical_action_can_map_from_explicit_action_description(self):
+        class FakeModel:
+            def generate_content(self, _prompt, generation_config=None):
+                return types.SimpleNamespace(
+                    text=(
+                        '{"matched_actions":[{"action_id":"administer_charted_option",'
+                        '"confidence":0.95,"evidence_source":"both"}],'
+                        '"suitability_score":4,"relevance_category":"direct",'
+                        '"rationale":"The proposed action explicitly describes administration."}'
+                    )
+                )
+
+        assessment = assess_interaction_actions(
+            self.case,
+            self.session,
+            action_text="I administer the verified charted option.",
+            dialogue_text="I am going to give this now, with your agreement.",
+            model=FakeModel(),
+        )
+
+        self.assertEqual(
+            assessment.matched_action_ids,
+            ("administer_charted_option",),
+        )
 
     def test_reasonable_unbounded_action_can_be_scored_without_state_mapping(self):
         class FakeModel:

@@ -46,6 +46,9 @@ class ActionAssessment:
     confidence: float
     rationale: str
     generated: bool
+    matched_action_ids: tuple[str, ...] = ()
+    action_confidences: tuple[float, ...] = ()
+    evidence_sources: tuple[str, ...] = ()
 
 
 ASSESSMENT_CRITERIA = (
@@ -56,6 +59,35 @@ ASSESSMENT_CRITERIA = (
     "Communication and trust: fits communication needs and uses clear, respectful wording.",
 )
 ACTION_MAPPING_CONFIDENCE = 0.70
+ACTION_EVIDENCE_SOURCES = (
+    "proposed_action",
+    "spoken_words",
+    "both",
+    "current_turn_with_recent_conversation",
+)
+
+
+def action_requires_explicit_description(action: dict[str, Any]) -> bool:
+    """Keep safety-critical and hands-on transitions out of speech-only inference."""
+
+    if action.get("requires_explicit_action") is True:
+        return True
+    searchable = " ".join(
+        [
+            str(action.get("action_id", "")),
+            str(action.get("label", "")),
+            *[str(key) for key in action.get("effects", {})],
+        ]
+    ).casefold()
+    markers = (
+        "administer",
+        "observation",
+        "escalat",
+        "senior_help",
+        "care_started",
+        "start_agreed_care",
+    )
+    return any(marker in searchable for marker in markers)
 
 
 def authored_dialogue_fallback(case: dict[str, Any], session: dict[str, Any]) -> str:
@@ -213,6 +245,119 @@ def _action_assessment_schema(case: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _interaction_action_schema(case: dict[str, Any]) -> dict[str, Any]:
+    action_ids = [action["action_id"] for action in case["allowed_actions"]]
+    return {
+        "type": "object",
+        "properties": {
+            "matched_actions": {
+                "type": "array",
+                "maxItems": 3,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "action_id": {"type": "string", "enum": action_ids},
+                        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                        "evidence_source": {
+                            "type": "string",
+                            "enum": list(ACTION_EVIDENCE_SOURCES),
+                        },
+                    },
+                    "required": ["action_id", "confidence", "evidence_source"],
+                    "additionalProperties": False,
+                },
+            },
+            "suitability_score": {"type": "integer", "minimum": 1, "maximum": 5},
+            "relevance_category": {
+                "type": "string",
+                "enum": list(RELEVANCE_CATEGORIES),
+            },
+            "rationale": {"type": "string"},
+        },
+        "required": [
+            "matched_actions",
+            "suitability_score",
+            "relevance_category",
+            "rationale",
+        ],
+        "additionalProperties": False,
+    }
+
+
+def _recent_learner_evidence(session: dict[str, Any]) -> list[dict[str, str]]:
+    evidence: list[dict[str, str]] = []
+    for item in session.get("transcript", [])[-12:]:
+        if str(item.get("role", "")).startswith("learner"):
+            evidence.append(
+                {
+                    "role": str(item.get("role", "")),
+                    "text": str(item.get("text", ""))[:600],
+                }
+            )
+    return evidence[-6:]
+
+
+def _interaction_action_prompt(
+    case: dict[str, Any],
+    session: dict[str, Any],
+    action_text: str,
+    dialogue_text: str,
+) -> str:
+    state = session["state"]
+    applied_ids = {
+        item.get("action_id")
+        for item in session.get("action_log", [])
+        if item.get("applied")
+    }
+    action_options = []
+    for action in case["allowed_actions"]:
+        action_options.append(
+            {
+                "action_id": action["action_id"],
+                "description": action["label"],
+                "prerequisites_met_now": all(
+                    state.get(key) == expected
+                    for key, expected in action["preconditions"].items()
+                ),
+                "already_applied": action["action_id"] in applied_ids,
+                "explicit_action_description_required": action_requires_explicit_description(
+                    action
+                ),
+            }
+        )
+    context = {
+        "patient": {
+            "display_name": case["patient"]["display_name"],
+            "communication_needs": case["patient"]["communication_needs"],
+            "explicit_preferences": case["patient"].get("explicit_preferences", []),
+        },
+        "presenting_context": case["clinical"]["presenting_context"],
+        "current_revealed_state": _known_state(case, state),
+        "bounded_action_options": action_options,
+        "current_turn": {
+            "proposed_action": action_text,
+            "spoken_words": dialogue_text,
+        },
+        "recent_learner_evidence": _recent_learner_evidence(session),
+    }
+    return """Recognise the learner's meaning in one turn of an entirely fictional nursing-education simulation. Map the current proposed action and spoken words to zero, one, or several bounded educator-authored actions. Interpret ordinary natural language; never require a scripted phrase.
+
+Recognition rules:
+- Spoken words can establish conversational actions such as seeking permission, exploring concerns, explaining, orienting, checking preferences, or teach-back.
+- Several distinct actions may be returned when the learner clearly completes them in the same turn. Preserve the order in which they occur.
+- Use recent learner evidence only to resolve a reference or complete an interaction that the current turn continues. Never advance from history alone.
+- Do not return an action merely because it is a sensible next step, was mentioned hypothetically, or was only offered for later.
+- Distinguish asking permission to perform an action from actually performing it.
+- If explicit_action_description_required is true, evidence from spoken_words alone is insufficient. It may be returned only when proposed_action explicitly describes completing that action; use proposed_action or both as its evidence source.
+- Do not return actions marked already_applied unless this turn genuinely repeats a repeatable assessment.
+- Confidence is semantic confidence that the learner actually completed the bounded action, not confidence that it would be clinically advisable.
+
+Score the combined turn from 1 (clearly concerning) to 5 (strongly appropriate). Relevance must be direct, supportive, tangential, unclear, or counterproductive. Do not invent clinical facts, consent, observations, medicines, treatment effects, or hidden events. Return only the schema-defined JSON.
+
+CONTEXT JSON:
+""" + json.dumps(context, ensure_ascii=False)
+
+
 def _action_assessment_prompt(case: dict[str, Any], session: dict[str, Any], action_text: str, dialogue_text: str) -> str:
     state = session["state"]
     action_options = []
@@ -326,6 +471,92 @@ def assess_proposed_action(
         confidence,
         rationale,
         True,
+    )
+
+
+def assess_interaction_actions(
+    case: dict[str, Any],
+    session: dict[str, Any],
+    action_text: str = "",
+    dialogue_text: str = "",
+    model=None,
+) -> ActionAssessment:
+    """Recognise up to three bounded actions from action text, speech, and recent context."""
+
+    fallback = ActionAssessment(
+        None,
+        3,
+        _score_band(3),
+        "unclear",
+        0.0,
+        "The interaction needs facilitator review because AI assessment is unavailable.",
+        False,
+    )
+    if not action_text.strip() and not dialogue_text.strip():
+        return fallback
+    try:
+        active_model = model or ai_client.GenerativeModel(ai_client.DIALOGUE_MODEL)
+        response = active_model.generate_content(
+            _interaction_action_prompt(
+                case, session, action_text.strip(), dialogue_text.strip()
+            ),
+            generation_config={
+                "response_mime_type": "application/json",
+                "response_schema": _interaction_action_schema(case),
+            },
+        )
+        raw = getattr(response, "text", "").strip().replace("```json", "").replace("```", "")
+        payload = json.loads(raw)
+        score = int(payload["suitability_score"])
+        relevance = str(payload["relevance_category"])
+        rationale = " ".join(str(payload["rationale"]).split())[:500]
+        raw_matches = payload["matched_actions"]
+        if not isinstance(raw_matches, list):
+            return fallback
+        allowed = {action["action_id"]: action for action in case["allowed_actions"]}
+        seen: set[str] = set()
+        ids: list[str] = []
+        confidences: list[float] = []
+        sources: list[str] = []
+        for item in raw_matches[:3]:
+            action_id = str(item["action_id"])
+            confidence = max(0.0, min(1.0, float(item["confidence"])))
+            source = str(item["evidence_source"])
+            if action_id not in allowed or action_id in seen:
+                continue
+            if source not in ACTION_EVIDENCE_SOURCES:
+                return fallback
+            if action_requires_explicit_description(allowed[action_id]) and (
+                not action_text.strip()
+                or source not in {"proposed_action", "both"}
+            ):
+                continue
+            seen.add(action_id)
+            ids.append(action_id)
+            confidences.append(confidence)
+            sources.append(source)
+    except (Exception, KeyError, TypeError, ValueError):
+        return fallback
+    if (
+        score not in range(1, 6)
+        or relevance not in RELEVANCE_CATEGORIES
+        or not rationale
+        or _contains_unsafe_dose(rationale)
+    ):
+        return fallback
+    primary_id = ids[0] if ids else None
+    primary_confidence = confidences[0] if confidences else 0.0
+    return ActionAssessment(
+        primary_id,
+        score,
+        _score_band(score),
+        relevance,
+        primary_confidence,
+        rationale,
+        True,
+        tuple(ids),
+        tuple(confidences),
+        tuple(sources),
     )
 
 

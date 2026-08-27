@@ -15,7 +15,8 @@ from modules.app_secrets import get_secret
 from modules.patient_dialogue import (
     ACTION_MAPPING_CONFIDENCE,
     ASSESSMENT_CRITERIA,
-    assess_proposed_action,
+    action_requires_explicit_description,
+    assess_interaction_actions,
     authored_dialogue_fallback,
     generate_interaction_evaluation,
 )
@@ -29,6 +30,7 @@ from modules.simulation_engine import (
     case_by_id,
     end_session,
     load_cases,
+    match_action_id,
     new_session,
     record_learner_dialogue,
     record_nursing_note,
@@ -532,12 +534,13 @@ def render_simulation(facilitator_mode: bool) -> None:
     with right:
         st.subheader("Plan your interaction")
         st.caption(
-            "The proposed action and spoken words are considered together against the "
-            "patient's current authored state."
+            "Speak naturally: conversational actions can be recognised from your words, "
+            "including more than one action in a turn. Describe observations, administration, "
+            "escalation and hands-on care explicitly in the action box."
         )
         with st.form("interaction_form", clear_on_submit=True):
             action_text = st.text_area(
-                "What are you going to do?",
+                "What are you going to do? (optional for conversation-only turns)",
                 height=95,
                 placeholder="Describe one clear nursing action…",
                 disabled=session["status"] == "ended",
@@ -566,35 +569,68 @@ def render_simulation(facilitator_mode: bool) -> None:
                 matched_action_label = None
                 action_assessment = None
                 latest_action = None
+                applied_actions = []
+                blocked_messages = []
+                canonical_replies = []
 
-                if action_clean:
-                    if AI_READY:
-                        with st.spinner("Assessing the proposed action against the patient state…"):
-                            action_assessment = assess_proposed_action(
-                                case, session, action_clean, dialogue_clean
-                            )
+                if AI_READY:
+                    with st.spinner("Interpreting the interaction against the patient state…"):
+                        action_assessment = assess_interaction_actions(
+                            case, session, action_clean, dialogue_clean
+                        )
 
-                    can_apply_ai_mapping = bool(
-                        action_assessment
-                        and action_assessment.generated
-                        and action_assessment.matched_action_id
-                        and action_assessment.confidence >= ACTION_MAPPING_CONFIDENCE
-                        and action_assessment.suitability_score >= 4
+                if action_assessment and action_assessment.generated:
+                    action_lookup = {
+                        action["action_id"]: action for action in case["allowed_actions"]
+                    }
+                    candidates = zip(
+                        action_assessment.matched_action_ids,
+                        action_assessment.action_confidences,
+                        action_assessment.evidence_sources,
                     )
-                    if can_apply_ai_mapping:
+                    for action_id, confidence, evidence_source in candidates:
+                        action = action_lookup[action_id]
+                        if confidence < ACTION_MAPPING_CONFIDENCE:
+                            continue
+                        if action_assessment.suitability_score < 4:
+                            continue
+                        if (
+                            action_requires_explicit_description(action)
+                            and (
+                                not action_clean
+                                or evidence_source not in {"proposed_action", "both"}
+                            )
+                        ):
+                            continue
                         action_result = apply_action(
                             case,
                             session,
-                            action_assessment.matched_action_id,
-                            learner_text=action_clean,
+                            action_id,
+                            minutes=2 if not applied_actions else 0,
+                            learner_text=action_clean or None,
                         )
-                    elif AI_READY:
-                        action_result = record_unmapped_action(
-                            case, session, action_clean
-                        )
+                        if not action_result.applied:
+                            blocked_messages.append(action_result.message)
+                            continue
+                        remove_latest_patient_response(session)
+                        latest_action = session["action_log"][-1]
+                        applied_actions.append(latest_action)
+                        canonical_replies.append(action_result.message)
+
+                if applied_actions:
+                    action_status = "applied"
+                    canonical_reply = " ".join(canonical_replies)
+                    matched_action_label = "; ".join(
+                        item["label"] for item in applied_actions
+                    )
+                elif blocked_messages:
+                    action_status = "blocked"
+                    canonical_reply = blocked_messages[0]
+                elif action_clean:
+                    if AI_READY:
+                        action_result = record_unmapped_action(case, session, action_clean)
                     else:
                         action_result = add_learner_action(case, session, action_clean)
-
                     if not action_result.applied:
                         action_status = "blocked"
                         canonical_reply = action_result.message
@@ -602,6 +638,7 @@ def render_simulation(facilitator_mode: bool) -> None:
                         latest_action = session["action_log"][-1]
                         if latest_action.get("applied"):
                             action_status = "applied"
+                            applied_actions.append(latest_action)
                             matched_action_label = latest_action["label"]
                             canonical_reply = action_result.message
                             remove_latest_patient_response(session)
@@ -609,9 +646,36 @@ def render_simulation(facilitator_mode: bool) -> None:
                             action_status = (
                                 "assessed_only" if action_assessment else "unrecognised"
                             )
+                elif dialogue_clean and not AI_READY:
+                    inferred_id = match_action_id(case, dialogue_clean)
+                    inferred_action = next(
+                        (
+                            item
+                            for item in case["allowed_actions"]
+                            if item["action_id"] == inferred_id
+                        ),
+                        None,
+                    )
+                    if inferred_action and not action_requires_explicit_description(
+                        inferred_action
+                    ):
+                        inferred_result = apply_action(
+                            case,
+                            session,
+                            inferred_id,
+                            minutes=1,
+                            learner_text=None,
+                        )
+                        if inferred_result.applied:
+                            latest_action = session["action_log"][-1]
+                            action_status = "applied"
+                            applied_actions.append(latest_action)
+                            matched_action_label = latest_action["label"]
+                            canonical_reply = inferred_result.message
+                            remove_latest_patient_response(session)
 
                 if dialogue_clean:
-                    dialogue_minutes = 0 if action_status in {"applied", "unrecognised"} else 1
+                    dialogue_minutes = 0 if action_clean or action_status == "applied" else 1
                     record_learner_dialogue(
                         case, session, dialogue_clean, minutes=dialogue_minutes
                     )
@@ -681,6 +745,9 @@ def render_simulation(facilitator_mode: bool) -> None:
                             if latest_action
                             else None
                         ),
+                        "matched_action_ids": [
+                            item["action_id"] for item in applied_actions
+                        ],
                         "rating": evaluation.rating,
                         "feedback": evaluation.feedback,
                         "generated": evaluation.generated,
