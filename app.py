@@ -42,9 +42,12 @@ from modules.simulation_engine import (
     new_session,
     record_learner_dialogue,
     record_clinical_check,
+    record_blocked_attempt,
     record_nursing_note,
     record_unmapped_action,
     remove_latest_patient_response,
+    session_repeated_blocked_action,
+    session_reached_duration,
     start_session,
     student_export,
 )
@@ -665,7 +668,7 @@ def render_simulation(facilitator_mode: bool) -> None:
                 action_assessment = None
                 latest_action = None
                 applied_actions = []
-                blocked_messages = []
+                blocked_attempts = []
                 canonical_replies = []
                 clinical_result_recorded = False
 
@@ -698,7 +701,9 @@ def render_simulation(facilitator_mode: bool) -> None:
                                 and action_assessment.relevance_category
                                 == "counterproductive"
                             ):
-                                blocked_messages.append(canonical_reply)
+                                blocked_attempts.append(
+                                    (action_id, action["label"], canonical_reply)
+                                )
                             continue
                         action_result = apply_action(
                             case,
@@ -708,7 +713,9 @@ def render_simulation(facilitator_mode: bool) -> None:
                             learner_text=action_clean or None,
                         )
                         if not action_result.applied:
-                            blocked_messages.append(action_result.message)
+                            blocked_attempts.append(
+                                (action_id, action["label"], action_result.message)
+                            )
                             continue
                         remove_latest_patient_response(session)
                         latest_action = session["action_log"][-1]
@@ -721,12 +728,40 @@ def render_simulation(facilitator_mode: bool) -> None:
                     matched_action_label = "; ".join(
                         item["label"] for item in applied_actions
                     )
-                elif blocked_messages:
+                elif blocked_attempts:
+                    blocked_id, blocked_label, blocked_reason = blocked_attempts[0]
+                    record_blocked_attempt(
+                        case,
+                        session,
+                        blocked_id,
+                        action_clean or blocked_label,
+                        blocked_reason,
+                    )
+                    latest_action = session["action_log"][-1]
                     action_status = "blocked"
-                    canonical_reply = blocked_messages[0]
+                    canonical_reply = blocked_reason
+                    matched_action_label = blocked_label
                 elif clinical_checks:
                     check_block_message = clinical_check_block(case, session)
                     if check_block_message:
+                        observation_action = next(
+                            (
+                                item
+                                for item in case["allowed_actions"]
+                                if item["action_id"] == "measure_observations"
+                            ),
+                            None,
+                        )
+                        record_blocked_attempt(
+                            case,
+                            session,
+                            observation_action["action_id"]
+                            if observation_action
+                            else None,
+                            action_clean,
+                            check_block_message,
+                        )
+                        latest_action = session["action_log"][-1]
                         action_status = "blocked"
                         canonical_reply = check_block_message
                     else:
@@ -753,6 +788,14 @@ def render_simulation(facilitator_mode: bool) -> None:
                                 matched_action_label = latest_action["label"]
                                 canonical_reply = full_result.message
                             else:
+                                record_blocked_attempt(
+                                    case,
+                                    session,
+                                    "measure_observations",
+                                    action_clean,
+                                    full_result.message,
+                                )
+                                latest_action = session["action_log"][-1]
                                 action_status = "blocked"
                                 canonical_reply = full_result.message
                         if action_status not in {"applied", "blocked"}:
@@ -855,8 +898,18 @@ def render_simulation(facilitator_mode: bool) -> None:
                                 canonical_reply = inferred_result.message
                                 remove_latest_patient_response(session)
                             else:
+                                record_blocked_attempt(
+                                    case,
+                                    session,
+                                    inferred_id,
+                                    action_clean or inferred_action["label"],
+                                    inferred_result.message,
+                                    minutes=2 if action_clean else 1,
+                                )
+                                latest_action = session["action_log"][-1]
                                 action_status = "blocked"
                                 canonical_reply = inferred_result.message
+                                matched_action_label = inferred_action["label"]
                         elif action_clean:
                             supportive = interaction_intent in {
                                 "address_correction",
@@ -1009,6 +1062,32 @@ def render_simulation(facilitator_mode: bool) -> None:
                         "response_latency": evaluation.response_latency,
                     }
                 )
+                stalled = session_repeated_blocked_action(session)
+                reached_duration = session_reached_duration(case, session)
+                if stalled or reached_duration:
+                    completion_text = (
+                        "The same blocked step has been attempted repeatedly. Continue "
+                        "with the prerequisite gap and reflection in the debrief."
+                        if stalled
+                        else "The planned encounter time has ended. Continue with the "
+                        "pathway review and reflection in the debrief."
+                    )
+                    session["transcript"].append(
+                        {
+                            "role": "cue",
+                            "speaker": "Scenario complete",
+                            "text": completion_text,
+                            "minute": session["state"]["elapsed_minutes"],
+                        }
+                    )
+                    end_session(
+                        session,
+                        reason=(
+                            "repeated_blocked_action"
+                            if stalled
+                            else "planned_duration"
+                        ),
+                    )
                 st.rerun()
 
         if session.get("practice_mode") == "coached":
@@ -1058,6 +1137,59 @@ def render_educator_rubric(session: dict) -> None:
             )
 
 
+def render_pathway_review(case: dict, session: dict) -> None:
+    """Summarise pathway evidence without turning omissions into a competence decision."""
+
+    logs = session.get("action_log", [])
+    applied_ids = {
+        item.get("action_id") for item in logs if item.get("applied")
+    }
+    attempted_ids = {
+        item.get("action_id") for item in logs if item.get("action_id")
+    }
+    blocked = [item for item in logs if item.get("status") == "blocked"]
+    blocked_groups: dict[tuple[str, str, str], int] = {}
+    for item in blocked:
+        key = (
+            str(item.get("action_id") or "unmapped"),
+            str(item.get("label", "Uncompleted action")),
+            str(item.get("reason", "An authored prerequisite was missing.")),
+        )
+        blocked_groups[key] = blocked_groups.get(key, 0) + 1
+    completed = [
+        action for action in case["allowed_actions"] if action["action_id"] in applied_ids
+    ]
+    not_reached = [
+        action
+        for action in case["allowed_actions"]
+        if action["action_id"] not in attempted_ids
+    ]
+
+    st.markdown("### Pathway review for debrief")
+    st.caption(
+        "This records what happened in this rehearsal. Missing or blocked steps are "
+        "discussion prompts, not an automatic competence decision."
+    )
+    if completed:
+        with st.expander(f"Completed authored steps · {len(completed)}"):
+            for action in completed:
+                st.markdown(f"- {action['label']}")
+    if blocked_groups:
+        with st.expander(
+            f"Attempted but not completed · {len(blocked_groups)}",
+            expanded=True,
+        ):
+            for (_, label, reason), count in blocked_groups.items():
+                repeat = f" Attempted {count} times." if count > 1 else ""
+                st.markdown(f"- **{label}** — {reason}{repeat}")
+    if not_reached:
+        with st.expander(f"Not reached in this run · {len(not_reached)}", expanded=True):
+            for action in not_reached:
+                st.markdown(f"- {action['label']}")
+    if not blocked_groups and not not_reached:
+        st.success("All authored pathway steps were reached during this run.")
+
+
 def render_debrief(facilitator_mode: bool) -> None:
     st.title("Structured debrief")
     safety_banner()
@@ -1076,6 +1208,7 @@ def render_debrief(facilitator_mode: bool) -> None:
     cols[2].metric("Visible changes", len(session["state"].get("revealed_cues", [])))
 
     if session["status"] == "ended":
+        render_pathway_review(case, session)
         st.markdown("### Formative interaction review")
         render_feedback_history(session)
         render_rubric_evidence_review(session)

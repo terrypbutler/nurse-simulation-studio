@@ -429,6 +429,53 @@ def record_unmapped_action(
     )
 
 
+def record_blocked_attempt(
+    case: dict[str, Any],
+    session: dict[str, Any],
+    action_id: str | None,
+    learner_text: str,
+    reason: str,
+    minutes: int = 2,
+) -> ActionResult:
+    """Record an incomplete attempt and advance time without applying its effects."""
+
+    if blocked := _interaction_block(session):
+        return ActionResult(False, blocked)
+    action = _find_action(case, action_id) if action_id else None
+    clean = " ".join(learner_text.split())[:600]
+    label = str(action["label"]) if action else clean or "Uncompleted action"
+    explanation = " ".join(reason.split())[:600]
+    session["state"]["elapsed_minutes"] += max(0, minutes)
+    session["transcript"].append(
+        {
+            "role": "learner_action",
+            "speaker": session["learner_name"],
+            "text": clean or label,
+            "minute": session["state"]["elapsed_minutes"],
+        }
+    )
+    session["transcript"].append(
+        {
+            "role": "cue",
+            "speaker": "Scenario response",
+            "text": explanation,
+            "minute": session["state"]["elapsed_minutes"],
+        }
+    )
+    session["action_log"].append(
+        {
+            "action_id": action_id,
+            "label": label,
+            "minute": session["state"]["elapsed_minutes"],
+            "applied": False,
+            "status": "blocked",
+            "reason": explanation,
+        }
+    )
+    fired = _resolve_due_events(case, session)
+    return ActionResult(True, explanation, (), fired)
+
+
 def add_learner_dialogue(
     case: dict[str, Any],
     session: dict[str, Any],
@@ -650,10 +697,37 @@ def replace_latest_patient_response(session: dict[str, Any], text: str) -> bool:
     return False
 
 
-def end_session(session: dict[str, Any]) -> None:
+def session_reached_duration(case: dict[str, Any], session: dict[str, Any]) -> bool:
+    """Return whether an active encounter has reached its authored time limit."""
+
+    planned = max(1, int(case.get("estimated_duration_minutes", 15)))
+    return (
+        session.get("status") == "active"
+        and session["state"].get("elapsed_minutes", 0) >= planned
+    )
+
+
+def session_repeated_blocked_action(
+    session: dict[str, Any], repeat_limit: int = 3
+) -> bool:
+    """Detect a repeated blocked step so the encounter can move to debrief."""
+
+    if repeat_limit < 2:
+        raise ValueError("repeat_limit must be at least 2")
+    recent = session.get("action_log", [])[-repeat_limit:]
+    if len(recent) < repeat_limit or not all(
+        item.get("status") == "blocked" for item in recent
+    ):
+        return False
+    keys = [item.get("action_id") or item.get("label") for item in recent]
+    return bool(keys[0]) and len(set(keys)) == 1
+
+
+def end_session(session: dict[str, Any], reason: str = "manual") -> None:
     session["status"] = "ended"
     session["phase"] = "debrief"
     session["ended_at"] = utc_timestamp()
+    session["end_reason"] = reason
 
 
 def student_export(case: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
@@ -668,6 +742,7 @@ def student_export(case: dict[str, Any], session: dict[str, Any]) -> dict[str, A
         "status": session["status"],
         "started_at": session["started_at"],
         "ended_at": session.get("ended_at"),
+        "end_reason": session.get("end_reason"),
         "elapsed_minutes": session["state"]["elapsed_minutes"],
         "transcript": deepcopy(session["transcript"]),
         "actions": deepcopy(session["action_log"]),

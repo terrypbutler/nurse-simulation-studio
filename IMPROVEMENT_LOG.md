@@ -21,6 +21,13 @@ uses intent-specific offline replies, and leaves unmatched turns unscored. The
 supplied introduction, identification and medication transcript is covered by
 automated and browser-level regression checks.
 
+Additional implementation update, 2026-08-28: blocked or out-of-sequence
+attempts now advance scenario time without applying unsafe effects. Encounters
+end automatically at their authored duration, and the debrief records completed,
+blocked and unreached pathway steps for discussion rather than allowing the
+simulation to loop indefinitely. Three consecutive attempts at the same blocked
+step now move directly to debrief.
+
 A clinically sensible turn was tested with both fields completed:
 
 - Action: “I introduce myself, confirm how Mrs Shaw would like to be addressed, and ask permission to discuss her pain.”

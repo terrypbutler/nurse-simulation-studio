@@ -10,10 +10,13 @@ from modules.simulation_engine import (
     load_cases,
     match_action_id,
     new_session,
+    record_blocked_attempt,
     record_nursing_note,
     record_unmapped_action,
     start_session,
     student_export,
+    session_reached_duration,
+    session_repeated_blocked_action,
 )
 
 
@@ -59,6 +62,53 @@ class SimulationEngineTests(unittest.TestCase):
         self.assertFalse(result.applied)
         self.assertFalse(self.session["state"]["analgesia_administered"])
         self.assertEqual(self.session["state"]["elapsed_minutes"], 0)
+
+    def test_blocked_attempt_advances_time_without_applying_effects(self):
+        original = deepcopy(self.session["state"])
+        blocked = apply_action(
+            self.case, self.session, "administer_charted_option"
+        )
+        recorded = record_blocked_attempt(
+            self.case,
+            self.session,
+            "administer_charted_option",
+            "I administer the charted option.",
+            blocked.message,
+        )
+        self.assertTrue(recorded.applied)
+        self.assertEqual(self.session["state"]["elapsed_minutes"], 2)
+        self.assertEqual(
+            self.session["state"]["analgesia_administered"],
+            original["analgesia_administered"],
+        )
+        self.assertEqual(self.session["action_log"][-1]["status"], "blocked")
+        self.assertFalse(self.session["action_log"][-1]["applied"])
+
+    def test_authored_duration_can_end_session_with_reason(self):
+        self.session["state"]["elapsed_minutes"] = (
+            self.case["estimated_duration_minutes"]
+        )
+        self.assertTrue(session_reached_duration(self.case, self.session))
+        end_session(self.session, reason="planned_duration")
+        exported = student_export(self.case, self.session)
+        self.assertEqual(exported["status"], "ended")
+        self.assertEqual(exported["end_reason"], "planned_duration")
+
+    def test_repeated_blocked_action_can_end_stalled_session(self):
+        for _ in range(3):
+            blocked = apply_action(
+                self.case, self.session, "administer_charted_option"
+            )
+            record_blocked_attempt(
+                self.case,
+                self.session,
+                "administer_charted_option",
+                "I administer the charted option.",
+                blocked.message,
+            )
+        self.assertTrue(session_repeated_blocked_action(self.session))
+        end_session(self.session, reason="repeated_blocked_action")
+        self.assertEqual(self.session["end_reason"], "repeated_blocked_action")
 
     def test_safe_pain_path_and_deltas(self):
         apply_action(self.case, self.session, "check_identity")

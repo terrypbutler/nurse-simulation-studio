@@ -61,6 +61,7 @@ py .\sample_patients\validate_cases.py
 - Richer bounded state for trust, emotion, fatigue, overload, understanding,
   confusion, dignity and consent
 - Deterministic, condition-aware time consequences
+- Time-bounded encounters that end at the authored duration or after a blocked step repeats
 - Natural patient dialogue, response latency and educator-authored non-verbal cues
 - Durable fact and conversation-move memory with recent-reply repetition checks
 - Quote-linked evidence for each case-specific educator criterion
@@ -68,6 +69,7 @@ py .\sample_patients\validate_cases.py
 - Restartable sessions
 - Facilitator-only view
 - Structured reactions–analysis–summary debrief
+- Debrief pathway review of completed, blocked and unreached authored steps
 - Editable case-specific educator rubrics and evidence notes
 - Learner-safe JSON export
 - Independently published, validated scenario library
