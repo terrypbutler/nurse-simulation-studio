@@ -54,3 +54,25 @@ def available_dialogue_facts(
         ):
             available.append(str(item["fact"]))
     return available
+
+
+def available_dialogue_fact_records(
+    case: dict[str, Any], state: dict[str, object]
+) -> list[dict[str, str]]:
+    """Return available authored facts with stable IDs for dialogue memory."""
+
+    records: list[dict[str, str]] = []
+    facts = case.get("dialogue", {}).get("facts", [])
+    if not isinstance(facts, list):
+        return records
+    for index, item in enumerate(facts):
+        if not isinstance(item, dict) or "fact" not in item:
+            continue
+        conditions = item.get("when", {})
+        if isinstance(conditions, dict) and all(
+            state.get(key) == value for key, value in conditions.items()
+        ):
+            records.append(
+                {"fact_id": f"fact_{index + 1}", "fact": str(item["fact"])}
+            )
+    return records

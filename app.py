@@ -459,7 +459,9 @@ def render_latest_feedback(session: dict) -> None:
             4: "Appropriate",
             5: "Strongly appropriate",
         }
-        st.markdown(f"**Proposed action suitability: {score}/5 — {score_labels[score]}**")
+        st.markdown(
+            f"**Provisional turn-level action score: {score}/5 — {score_labels[score]}**"
+        )
     relevance = latest.get("relevance_category")
     if relevance:
         st.caption(f"Relevance to this moment: {relevance.replace('_', ' ').title()}")
@@ -475,6 +477,18 @@ def render_latest_feedback(session: dict) -> None:
         else "Authored fallback"
     )
     st.caption(f"{source} feedback on this interaction only · not a competence assessment")
+    findings = latest.get("rubric_findings", [])
+    if findings:
+        st.markdown("**Evidence identified in this turn**")
+        rubric_labels = {
+            item["criterion_id"]: item["label"]
+            for item in session.get("educator_rubric", [])
+        }
+        for finding in findings:
+            label = rubric_labels.get(finding["criterion_id"], finding["criterion_id"])
+            st.markdown(
+                f"- **{label} — {finding['finding'].title()}:** “{finding['evidence_quote']}”"
+            )
     with st.expander("How action suitability is judged", expanded=False):
         for criterion in ASSESSMENT_CRITERIA:
             st.markdown(f"- {criterion}")
@@ -506,6 +520,58 @@ def render_feedback_history(session: dict) -> None:
                     + (f" · {relevance.replace('_', ' ').title()} relevance" if relevance else "")
                 )
             st.write(item.get("feedback", "No feedback text was recorded."))
+            findings = item.get("rubric_findings", [])
+            if findings:
+                st.markdown("**Criterion-linked evidence**")
+                for finding in findings:
+                    st.markdown(
+                        f"- **{finding['finding'].title()}** — “{finding['evidence_quote']}”  \n"
+                        f"  {finding['rationale']}"
+                    )
+
+
+def render_rubric_evidence_review(session: dict) -> None:
+    """Aggregate traceable turn evidence against the educator-authored rubric."""
+
+    st.markdown("### Educator-criterion evidence")
+    st.caption(
+        "Evidence is extracted from the trainee’s exact words or described actions. "
+        "Absence means not evidenced in this simulation, not incompetence."
+    )
+    all_findings = [
+        {**finding, "minute": turn.get("minute", 0)}
+        for turn in session.get("feedback_log", [])
+        for finding in turn.get("rubric_findings", [])
+    ]
+    for criterion in session.get("educator_rubric", []):
+        findings = [
+            item
+            for item in all_findings
+            if item.get("criterion_id") == criterion["criterion_id"]
+        ]
+        has_concern = any(item.get("finding") == "concern" for item in findings)
+        has_demonstrated = any(
+            item.get("finding") == "demonstrated" for item in findings
+        )
+        has_partial = any(item.get("finding") == "partial" for item in findings)
+        if has_concern:
+            status, icon = "Concern recorded", "⚠️"
+        elif has_demonstrated:
+            status, icon = "Evidence demonstrated", "✅"
+        elif has_partial:
+            status, icon = "Partial evidence", "🟠"
+        else:
+            status, icon = "Not evidenced", "⚪"
+        with st.expander(f"{icon} {criterion['label']} — {status}"):
+            st.write(criterion["guidance"])
+            if not findings:
+                st.info("No traceable evidence was identified for this criterion.")
+            for finding in findings:
+                st.markdown(
+                    f"**Minute {finding['minute']} · {finding['finding'].title()}**  \n"
+                    f"“{finding['evidence_quote']}”"
+                )
+                st.caption(finding["rationale"])
 
 
 def render_simulation(facilitator_mode: bool) -> None:
@@ -819,6 +885,8 @@ def render_simulation(facilitator_mode: bool) -> None:
                     evaluation.patient_reply,
                     nonverbal_cue=evaluation.nonverbal_cue,
                     response_latency=evaluation.response_latency,
+                    disclosed_fact_ids=evaluation.disclosed_fact_ids,
+                    conversation_move=evaluation.conversation_move,
                 )
                 fallback_score = {
                     "applied": 4,
@@ -869,6 +937,20 @@ def render_simulation(facilitator_mode: bool) -> None:
                         "action_assessment_generated": (
                             action_assessment.generated if action_assessment else False
                         ),
+                        "rubric_findings": [
+                            {
+                                "criterion_id": finding.criterion_id,
+                                "finding": finding.finding,
+                                "evidence_quote": finding.evidence_quote,
+                                "rationale": finding.rationale,
+                                "confidence": finding.confidence,
+                            }
+                            for finding in (
+                                action_assessment.rubric_findings
+                                if action_assessment
+                                else ()
+                            )
+                        ],
                         "patient_nonverbal_cue": evaluation.nonverbal_cue,
                         "response_latency": evaluation.response_latency,
                     }
@@ -942,6 +1024,7 @@ def render_debrief(facilitator_mode: bool) -> None:
     if session["status"] == "ended":
         st.markdown("### Formative interaction review")
         render_feedback_history(session)
+        render_rubric_evidence_review(session)
     elif session.get("practice_mode") == "immersive":
         st.info("Immersive-mode feedback remains hidden until the simulation is ended.")
 

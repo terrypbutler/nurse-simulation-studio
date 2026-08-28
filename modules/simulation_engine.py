@@ -110,6 +110,11 @@ def new_session(
         "generated_observations": {},
         "generated_observation_stage": None,
         "latest_patient_expression": {},
+        "conversation_memory": {
+            "disclosed_fact_ids": [],
+            "recent_patient_replies": [opening_line(case)],
+            "recent_conversation_moves": ["express_concern"],
+        },
         "educator_rubric": deepcopy(case.get("educator_rubric", [])),
         "reflection": {},
     }
@@ -522,6 +527,8 @@ def append_patient_response(
     text: str,
     nonverbal_cue: str = "",
     response_latency: str = "immediate",
+    disclosed_fact_ids: tuple[str, ...] = (),
+    conversation_move: str = "acknowledge",
 ) -> bool:
     """Append patient wording without changing deterministic state."""
 
@@ -551,6 +558,23 @@ def append_patient_response(
         "nonverbal_cue": cue,
         "response_latency": response_latency,
     }
+    memory = session.setdefault(
+        "conversation_memory",
+        {
+            "disclosed_fact_ids": [],
+            "recent_patient_replies": [],
+            "recent_conversation_moves": [],
+        },
+    )
+    memory["disclosed_fact_ids"] = list(
+        dict.fromkeys(
+            [*memory.get("disclosed_fact_ids", []), *disclosed_fact_ids]
+        )
+    )
+    memory.setdefault("recent_patient_replies", []).append(clean)
+    memory["recent_patient_replies"] = memory["recent_patient_replies"][-6:]
+    memory.setdefault("recent_conversation_moves", []).append(conversation_move)
+    memory["recent_conversation_moves"] = memory["recent_conversation_moves"][-6:]
     return True
 
 

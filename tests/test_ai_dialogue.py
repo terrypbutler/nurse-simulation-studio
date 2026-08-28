@@ -155,6 +155,23 @@ class PatientDialogueTests(unittest.TestCase):
         self.assertFalse(reply.generated)
         self.assertEqual(reply.text, "Please explain the next step.")
 
+    def test_exact_recent_patient_reply_is_rejected(self):
+        opening = self.session["transcript"][0]["text"]
+
+        class RepeatingModel:
+            def generate_content(self, _prompt):
+                return types.SimpleNamespace(text=opening)
+
+        reply = generate_patient_reply(
+            self.case,
+            self.session,
+            "Can you tell me again?",
+            canonical_reply="Could you ask me a more specific question?",
+            model=RepeatingModel(),
+        )
+        self.assertFalse(reply.generated)
+        self.assertEqual(reply.text, "Could you ask me a more specific question?")
+
     def test_custom_dialogue_reply_does_not_change_state(self):
         original = deepcopy(self.session["state"])
         result = add_learner_dialogue(
@@ -215,6 +232,9 @@ class PatientDialogueTests(unittest.TestCase):
         self.assertIn("may I check your wristband", captured["prompt"])
         self.assertEqual(captured["config"]["response_mime_type"], "application/json")
         self.assertEqual(captured["config"]["response_schema"]["type"], "object")
+        required = captured["config"]["response_schema"]["required"]
+        self.assertIn("disclosed_fact_ids", required)
+        self.assertIn("conversation_move", required)
         self.assertIn(
             evaluation.nonverbal_cue,
             captured["config"]["response_schema"]["properties"]["nonverbal_cue"]["enum"],
@@ -300,6 +320,57 @@ class PatientDialogueTests(unittest.TestCase):
         self.assertEqual(
             captured["schema"]["properties"]["matched_actions"]["maxItems"], 3
         )
+
+    def test_turn_assessment_returns_quote_linked_rubric_evidence(self):
+        words = "Could you tell me where the pain is and how it affects your movement?"
+
+        class FakeModel:
+            def generate_content(self, _prompt, generation_config=None):
+                return types.SimpleNamespace(
+                    text=(
+                        '{"matched_actions":[{"action_id":"assess_pain",'
+                        '"confidence":0.94,"evidence_source":"spoken_words"}],'
+                        '"suitability_score":5,"relevance_category":"direct",'
+                        '"rationale":"A focused person-centred assessment.",'
+                        '"criterion_evidence":[{"criterion_id":"assessment",'
+                        '"finding":"demonstrated","evidence_quote":"' + words + '",'
+                        '"rationale":"The learner explores site and functional impact.",'
+                        '"confidence":0.93}]}'
+                    )
+                )
+
+        assessment = assess_interaction_actions(
+            self.case,
+            self.session,
+            dialogue_text=words,
+            model=FakeModel(),
+        )
+        self.assertEqual(len(assessment.rubric_findings), 1)
+        finding = assessment.rubric_findings[0]
+        self.assertEqual(finding.criterion_id, "assessment")
+        self.assertEqual(finding.finding, "demonstrated")
+        self.assertEqual(finding.evidence_quote, words)
+
+    def test_untraceable_rubric_quote_is_ignored(self):
+        class FakeModel:
+            def generate_content(self, _prompt, generation_config=None):
+                return types.SimpleNamespace(
+                    text=(
+                        '{"matched_actions":[],"suitability_score":3,'
+                        '"relevance_category":"unclear","rationale":"Needs review.",'
+                        '"criterion_evidence":[{"criterion_id":"assessment",'
+                        '"finding":"demonstrated","evidence_quote":"I completed everything",'
+                        '"rationale":"Unsupported quotation.","confidence":0.9}]}'
+                    )
+                )
+
+        assessment = assess_interaction_actions(
+            self.case,
+            self.session,
+            dialogue_text="How are you feeling?",
+            model=FakeModel(),
+        )
+        self.assertEqual(assessment.rubric_findings, ())
 
     def test_safety_critical_action_is_rejected_from_spoken_words_alone(self):
         class FakeModel:
@@ -473,11 +544,21 @@ class PatientDialogueTests(unittest.TestCase):
             "Yes, that's fine.",
             nonverbal_cue=self.case["patient"]["nonverbal_palette"][0],
             response_latency="brief_pause",
+            disclosed_fact_ids=("fact_1",),
+            conversation_move="answer",
         )
         self.assertEqual(self.session["state"], original)
         self.assertEqual(self.session["transcript"][-3]["role"], "learner_dialogue")
         self.assertEqual(self.session["transcript"][-2]["role"], "nonverbal")
         self.assertEqual(self.session["transcript"][-1]["role"], "patient")
+        self.assertIn(
+            "fact_1",
+            self.session["conversation_memory"]["disclosed_fact_ids"],
+        )
+        self.assertEqual(
+            self.session["conversation_memory"]["recent_conversation_moves"][-1],
+            "answer",
+        )
 
 
 if __name__ == "__main__":

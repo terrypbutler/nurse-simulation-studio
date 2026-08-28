@@ -61,6 +61,9 @@ py .\sample_patients\validate_cases.py
   confusion, dignity and consent
 - Deterministic, condition-aware time consequences
 - Natural patient dialogue, response latency and educator-authored non-verbal cues
+- Durable fact and conversation-move memory with recent-reply repetition checks
+- Quote-linked evidence for each case-specific educator criterion
+- Debrief aggregation showing demonstrated, partial, concerning and absent evidence
 - Restartable sessions
 - Facilitator-only view
 - Structured reactions–analysis–summary debrief
