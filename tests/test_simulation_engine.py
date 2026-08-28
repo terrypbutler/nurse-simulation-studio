@@ -127,7 +127,7 @@ class SimulationEngineTests(unittest.TestCase):
         )
         self.assertIsNone(match_action_id(self.case, "I will take a blood sample."))
 
-    def test_identity_and_medication_wording_match_without_scripted_phrases(self):
+    def test_identity_variants_match_without_scripted_phrases(self):
         self.assertEqual(
             match_action_id(
                 self.case,
@@ -138,7 +138,31 @@ class SimulationEngineTests(unittest.TestCase):
         self.assertEqual(
             match_action_id(
                 self.case,
-                "Check to see what medications she is on at the moment.",
+                "Check identification and verify the patient's ID.",
+            ),
+            "check_identity",
+        )
+
+    def test_combined_action_and_words_can_identify_pain_assessment(self):
+        self.assertEqual(
+            match_action_id(
+                self.case,
+                "I discuss her pain. Could you tell me where it hurts and how severe it is from zero to ten?",
+            ),
+            "assess_pain",
+        )
+
+    def test_medication_history_question_does_not_complete_record_check(self):
+        self.assertIsNone(
+            match_action_id(
+                self.case,
+                "Check medication. I am going to see what medication you are on.",
+            )
+        )
+        self.assertEqual(
+            match_action_id(
+                self.case,
+                "Check the allergy record and prescription chart.",
             ),
             "check_allergies_and_prescription",
         )
@@ -151,6 +175,16 @@ class SimulationEngineTests(unittest.TestCase):
         self.assertEqual(self.session["state"]["pain_score"], original_state["pain_score"])
         self.assertIsNone(self.session["action_log"][0]["action_id"])
         self.assertFalse(self.session["action_log"][0]["applied"])
+
+    def test_supportive_unmatched_action_has_specific_transcript_cue(self):
+        result = add_learner_action(
+            self.case,
+            self.session,
+            "I introduce myself.",
+            supportive=True,
+        )
+        self.assertTrue(result.applied)
+        self.assertIn("supportive action", self.session["transcript"][-1]["text"])
 
     def test_ai_unmapped_action_helper_never_changes_authored_clinical_facts(self):
         original = deepcopy(self.session["state"])

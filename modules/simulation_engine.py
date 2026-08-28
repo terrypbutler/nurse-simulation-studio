@@ -34,17 +34,28 @@ GENERIC_ACTION_PHRASES = {
         "check patient details",
     ),
     "check_allergies_and_prescription": (
-        "check current medications",
-        "check current medicines",
-        "check what medications",
-        "check what medicines",
-        "medications currently taking",
-        "medicines currently taking",
-        "medications she is on",
-        "medications he is on",
-        "medicines she is on",
-        "medicines he is on",
+        "check allergy and prescription records",
+        "check allergy record and medication chart",
+        "review allergies and prescription chart",
     ),
+}
+
+ACTION_WORD_ALIASES = {
+    "allergies": "allergy",
+    "dob": "birthdate",
+    "drugs": "medication",
+    "hurt": "pain",
+    "hurts": "pain",
+    "id": "identity",
+    "identification": "identity",
+    "identifier": "identity",
+    "identifiers": "identity",
+    "medications": "medication",
+    "medicine": "medication",
+    "medicines": "medication",
+    "painful": "pain",
+    "prescriptions": "prescription",
+    "severe": "severity",
 }
 
 
@@ -220,8 +231,37 @@ def clinical_check_block(case: dict[str, Any], session: dict[str, Any]) -> str |
 
 
 def _normalise_action_text(text: str) -> tuple[str, set[str]]:
-    normalised = " ".join(re.findall(r"[a-z0-9]+", text.casefold()))
-    return normalised, set(normalised.split())
+    raw_words = re.findall(r"[a-z0-9]+", text.casefold())
+    canonical_words = [ACTION_WORD_ALIASES.get(word, word) for word in raw_words]
+    normalised = " ".join(canonical_words)
+    return normalised, set(canonical_words)
+
+
+def _concept_action_candidates(words: set[str]) -> list[tuple[int, str]]:
+    """Recognise narrow clinical concepts without completing broad implied actions."""
+
+    candidates: list[tuple[int, str]] = []
+    checking_words = {"check", "confirm", "verify", "review"}
+    if "identity" in words and words & checking_words:
+        candidates.append((4, "check_identity"))
+
+    pain_dimensions = {
+        "character",
+        "effect",
+        "movement",
+        "score",
+        "severity",
+        "site",
+        "where",
+    }
+    if "pain" in words and words & pain_dimensions:
+        candidates.append((4, "assess_pain"))
+
+    record_words = {"chart", "record", "prescription"}
+    medicine_words = {"allergy", "medication", "prescription"}
+    if words & checking_words and words & record_words and words & medicine_words:
+        candidates.append((5, "check_allergies_and_prescription"))
+    return candidates
 
 
 def match_action_id(case: dict[str, Any], text: str) -> str | None:
@@ -246,6 +286,10 @@ def match_action_id(case: dict[str, Any], text: str) -> str | None:
                 best_score = max(best_score, len(phrase_words))
         if best_score:
             candidates.append((best_score, action_id))
+
+    for score, action_id in _concept_action_candidates(words):
+        if action_id in allowed_ids:
+            candidates.append((score, action_id))
 
     if not candidates:
         return None
@@ -309,7 +353,11 @@ def apply_action(
 
 
 def add_learner_action(
-    case: dict[str, Any], session: dict[str, Any], text: str, minutes: int = 2
+    case: dict[str, Any],
+    session: dict[str, Any],
+    text: str,
+    minutes: int = 2,
+    supportive: bool = False,
 ) -> ActionResult:
     """Interpret a free-text action without exposing the authored action menu."""
 
@@ -323,7 +371,9 @@ def add_learner_action(
     if action_id is not None:
         return apply_action(case, session, action_id, minutes, learner_text=clean)
 
-    return record_unmapped_action(case, session, clean, minutes)
+    return record_unmapped_action(
+        case, session, clean, minutes, supportive=supportive
+    )
 
 
 def record_unmapped_action(

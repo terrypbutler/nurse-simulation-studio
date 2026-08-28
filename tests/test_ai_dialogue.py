@@ -9,6 +9,8 @@ from modules.patient_dialogue import (
     assess_interaction_actions,
     assess_proposed_action,
     authored_dialogue_fallback,
+    authored_interaction_fallback,
+    classify_interaction_intent,
     generate_interaction_evaluation,
     generate_patient_reply,
     recognised_action_can_apply,
@@ -139,6 +141,58 @@ class PatientDialogueTests(unittest.TestCase):
         )
         self.assertFalse(reply.generated)
         self.assertTrue(reply.text)
+
+    def test_introduction_fallback_corrects_preferred_address(self):
+        reply, intent = authored_interaction_fallback(
+            self.case,
+            self.session,
+            "Introduce myself",
+            "Hello Miss Shaw, I am Terry. I'm a trainee nurse.",
+        )
+        self.assertEqual(intent, "address_correction")
+        self.assertEqual(reply, "It's Mrs Shaw, please.")
+
+    def test_medication_history_is_separate_from_record_check(self):
+        intent = classify_interaction_intent(
+            self.case,
+            "Check medication",
+            "I'm going to see what medication you are on.",
+        )
+        reply, fallback_intent = authored_interaction_fallback(
+            self.case,
+            self.session,
+            "Check medication",
+            "I'm going to see what medication you are on.",
+        )
+        self.assertEqual(intent, "medication_history")
+        self.assertEqual(fallback_intent, intent)
+        self.assertIn("usual medicines", reply)
+
+    def test_supportive_fallback_turn_is_unscored_but_appropriate(self):
+        class FailingModel:
+            def generate_content(self, _prompt, generation_config=None):
+                raise RuntimeError("provider unavailable")
+
+        reply, intent = authored_interaction_fallback(
+            self.case,
+            self.session,
+            "Introduce myself",
+            "Hello Mrs Shaw, I am Terry, a trainee nurse.",
+        )
+        evaluation = generate_interaction_evaluation(
+            case=self.case,
+            session=self.session,
+            state_before=deepcopy(self.session["state"]),
+            action_text="Introduce myself",
+            dialogue_text="Hello Mrs Shaw, I am Terry, a trainee nurse.",
+            action_status="supportive_only",
+            canonical_reply=reply,
+            interaction_intent=intent,
+            model=FailingModel(),
+        )
+        self.assertEqual(evaluation.rating, "appropriate")
+        self.assertIn("supportive communication", evaluation.feedback)
+        self.assertEqual(evaluation.patient_reply, reply)
 
     def test_generated_dose_is_rejected(self):
         class UnsafeModel:

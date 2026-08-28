@@ -23,7 +23,7 @@ from modules.patient_dialogue import (
     ASSESSMENT_CRITERIA,
     action_requires_explicit_description,
     assess_interaction_actions,
-    authored_dialogue_fallback,
+    authored_interaction_fallback,
     generate_interaction_evaluation,
     recognised_action_can_apply,
 )
@@ -462,6 +462,8 @@ def render_latest_feedback(session: dict) -> None:
         st.markdown(
             f"**Provisional turn-level action score: {score}/5 — {score_labels[score]}**"
         )
+    else:
+        st.markdown("**Not automatically scored — facilitator review available**")
     relevance = latest.get("relevance_category")
     if relevance:
         st.caption(f"Relevance to this moment: {relevance.replace('_', ' ').title()}")
@@ -519,6 +521,8 @@ def render_feedback_history(session: dict) -> None:
                     f"Suitability {score}/5"
                     + (f" · {relevance.replace('_', ' ').title()} relevance" if relevance else "")
                 )
+            else:
+                st.write("Not automatically scored")
             st.write(item.get("feedback", "No feedback text was recorded."))
             findings = item.get("rubric_findings", [])
             if findings:
@@ -653,7 +657,9 @@ def render_simulation(facilitator_mode: bool) -> None:
             else:
                 state_before = deepcopy(session["state"])
                 clinical_checks = requested_checks(action_clean)
-                canonical_reply = authored_dialogue_fallback(case, session)
+                canonical_reply, interaction_intent = authored_interaction_fallback(
+                    case, session, action_clean, dialogue_clean
+                )
                 action_status = "not_provided"
                 matched_action_label = None
                 action_assessment = None
@@ -779,61 +785,106 @@ def render_simulation(facilitator_mode: bool) -> None:
                     ):
                         action_status = "assessed_only"
                         st.info(observation_set.notice)
-                elif action_clean:
-                    if AI_READY:
+                elif action_clean or (dialogue_clean and not AI_READY):
+                    if AI_READY and action_clean:
+                        supportive_intent = interaction_intent in {
+                            "address_correction",
+                            "closing",
+                            "introduction",
+                            "permission_to_talk",
+                        }
                         action_result = record_unmapped_action(
                             case,
                             session,
                             action_clean,
                             supportive=bool(
-                                action_assessment
-                                and action_assessment.relevance_category == "supportive"
+                                supportive_intent
+                                or (
+                                    action_assessment
+                                    and action_assessment.generated
+                                    and action_assessment.relevance_category
+                                    == "supportive"
+                                )
                             ),
                         )
-                    else:
-                        action_result = add_learner_action(case, session, action_clean)
-                    if not action_result.applied:
-                        action_status = "blocked"
-                        canonical_reply = action_result.message
-                    else:
-                        latest_action = session["action_log"][-1]
-                        if latest_action.get("applied"):
-                            action_status = "applied"
-                            applied_actions.append(latest_action)
-                            matched_action_label = latest_action["label"]
+                        if not action_result.applied:
+                            action_status = "blocked"
                             canonical_reply = action_result.message
-                            remove_latest_patient_response(session)
                         else:
-                            action_status = (
-                                "assessed_only" if action_assessment else "unrecognised"
-                            )
-                elif dialogue_clean and not AI_READY:
-                    inferred_id = match_action_id(case, dialogue_clean)
-                    inferred_action = next(
-                        (
-                            item
-                            for item in case["allowed_actions"]
-                            if item["action_id"] == inferred_id
-                        ),
-                        None,
-                    )
-                    if inferred_action and not action_requires_explicit_description(
-                        inferred_action
-                    ):
-                        inferred_result = apply_action(
-                            case,
-                            session,
-                            inferred_id,
-                            minutes=1,
-                            learner_text=None,
-                        )
-                        if inferred_result.applied:
                             latest_action = session["action_log"][-1]
-                            action_status = "applied"
-                            applied_actions.append(latest_action)
-                            matched_action_label = latest_action["label"]
-                            canonical_reply = inferred_result.message
-                            remove_latest_patient_response(session)
+                            action_status = (
+                                "assessed_only"
+                                if action_assessment and action_assessment.generated
+                                else "supportive_only"
+                                if supportive_intent
+                                else "unrecognised"
+                            )
+                    elif not AI_READY:
+                        combined_text = " ".join(
+                            part for part in (action_clean, dialogue_clean) if part
+                        )
+                        inferred_id = match_action_id(case, combined_text)
+                        inferred_action = next(
+                            (
+                                item
+                                for item in case["allowed_actions"]
+                                if item["action_id"] == inferred_id
+                            ),
+                            None,
+                        )
+                        if inferred_action and action_requires_explicit_description(
+                            inferred_action
+                        ):
+                            explicit_match = match_action_id(case, action_clean)
+                            if explicit_match != inferred_id:
+                                inferred_action = None
+
+                        if inferred_action:
+                            inferred_result = apply_action(
+                                case,
+                                session,
+                                inferred_id,
+                                minutes=2 if action_clean else 1,
+                                learner_text=action_clean or None,
+                            )
+                            if inferred_result.applied:
+                                latest_action = session["action_log"][-1]
+                                action_status = "applied"
+                                applied_actions.append(latest_action)
+                                matched_action_label = latest_action["label"]
+                                canonical_reply = inferred_result.message
+                                remove_latest_patient_response(session)
+                            else:
+                                action_status = "blocked"
+                                canonical_reply = inferred_result.message
+                        elif action_clean:
+                            supportive = interaction_intent in {
+                                "address_correction",
+                                "closing",
+                                "introduction",
+                                "permission_to_talk",
+                            }
+                            action_result = add_learner_action(
+                                case,
+                                session,
+                                action_clean,
+                                supportive=supportive,
+                            )
+                            if not action_result.applied:
+                                action_status = "blocked"
+                                canonical_reply = action_result.message
+                            else:
+                                latest_action = session["action_log"][-1]
+                                action_status = (
+                                    "supportive_only" if supportive else "unrecognised"
+                                )
+                        elif interaction_intent in {
+                            "address_correction",
+                            "closing",
+                            "introduction",
+                            "permission_to_talk",
+                        }:
+                            action_status = "supportive_only"
 
                 if clinical_checks and action_status == "applied" and not clinical_result_recorded:
                     observation_set = generate_observations(case, session)
@@ -871,6 +922,7 @@ def render_simulation(facilitator_mode: bool) -> None:
                         canonical_reply=canonical_reply,
                         matched_action_label=matched_action_label,
                         action_assessment=action_assessment,
+                        interaction_intent=interaction_intent,
                     )
 
                 if AI_READY:
@@ -891,8 +943,6 @@ def render_simulation(facilitator_mode: bool) -> None:
                 fallback_score = {
                     "applied": 4,
                     "blocked": 2,
-                    "unrecognised": 3,
-                    "assessed_only": 3,
                     "clinical_check": 4,
                 }.get(action_status)
                 session.setdefault("feedback_log", []).append(
@@ -903,27 +953,31 @@ def render_simulation(facilitator_mode: bool) -> None:
                         "action_status": action_status,
                         "suitability_score": (
                             action_assessment.suitability_score
-                            if action_assessment
+                            if action_assessment and action_assessment.generated
                             else fallback_score
                         ),
                         "suitability_band": (
                             action_assessment.suitability_band
-                            if action_assessment
+                            if action_assessment and action_assessment.generated
                             else None
                         ),
                         "relevance_category": (
                             action_assessment.relevance_category
-                            if action_assessment
+                            if action_assessment and action_assessment.generated
                             else "direct"
                             if action_status == "applied"
+                            else "supportive"
+                            if action_status == "supportive_only"
                             else "unclear"
                         ),
                         "mapping_confidence": (
-                            action_assessment.confidence if action_assessment else None
+                            action_assessment.confidence
+                            if action_assessment and action_assessment.generated
+                            else None
                         ),
                         "matched_action_id": (
                             action_assessment.matched_action_id
-                            if action_assessment
+                            if action_assessment and action_assessment.generated
                             else latest_action.get("action_id")
                             if latest_action
                             else None

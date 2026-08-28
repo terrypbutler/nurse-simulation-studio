@@ -163,6 +163,87 @@ def authored_dialogue_fallback(case: dict[str, Any], session: dict[str, Any]) ->
     return "Please go on."
 
 
+def classify_interaction_intent(
+    case: dict[str, Any], action_text: str = "", dialogue_text: str = ""
+) -> str | None:
+    """Recognise common non-clinical conversation intents for offline replies."""
+
+    combined = " ".join(f"{action_text} {dialogue_text}".casefold().split())
+    preferred = str(case["patient"].get("preferred_address", "")).casefold()
+    surname = preferred.split()[-1] if preferred else ""
+    if preferred.startswith("mrs ") and surname and f"miss {surname}" in combined:
+        return "address_correction"
+
+    medication_terms = ("medication", "medications", "medicine", "medicines")
+    if any(term in combined for term in medication_terms) and any(
+        phrase in combined
+        for phrase in (
+            "what medication",
+            "what medicine",
+            "medication you are on",
+            "medicines you are on",
+            "medication you take",
+            "medicines you take",
+        )
+    ):
+        return "medication_history"
+
+    if any(
+        phrase in combined
+        for phrase in (
+            "is it okay if",
+            "is it alright if",
+            "permission to talk",
+            "permission to discuss",
+            "may we talk",
+            "can we talk",
+        )
+    ):
+        return "permission_to_talk"
+
+    if any(
+        phrase in combined
+        for phrase in (
+            "introduce myself",
+            "pleased to meet you",
+            "nice to meet you",
+            "student nurse",
+            "trainee nurse",
+        )
+    ) or re.search(r"\b(?:hello|hi|good morning|good afternoon)\b", combined):
+        return "introduction"
+
+    if any(
+        phrase in combined
+        for phrase in ("goodbye", "see you later", "thank you for speaking")
+    ):
+        return "closing"
+    return None
+
+
+def authored_interaction_fallback(
+    case: dict[str, Any],
+    session: dict[str, Any],
+    action_text: str = "",
+    dialogue_text: str = "",
+) -> tuple[str, str | None]:
+    """Return a relevant authored offline reply and its conversation intent."""
+
+    intent = classify_interaction_intent(case, action_text, dialogue_text)
+    preferred = str(case["patient"].get("preferred_address", "")).strip()
+    replies = {
+        "address_correction": f"It's {preferred}, please." if preferred else "Please use the name on my record.",
+        "medication_history": "Do you mean my usual medicines, or the current prescription chart?",
+        "permission_to_talk": "Yes, that's alright.",
+        "introduction": f"Hello. Please call me {preferred}." if preferred else "Hello.",
+        "closing": "Thank you for explaining what will happen next.",
+    }
+    preferred_reply = replies.get(intent)
+    if preferred_reply:
+        return _nonrepeating_fallback(case, session, preferred_reply), intent
+    return authored_dialogue_fallback(case, session), None
+
+
 def _nonrepeating_fallback(
     case: dict[str, Any], session: dict[str, Any], preferred: str
 ) -> str:
@@ -785,10 +866,11 @@ def _fallback_evaluation(
     action_status: str,
     canonical_reply: str,
     action_assessment: ActionAssessment | None = None,
+    interaction_intent: str | None = None,
 ) -> InteractionEvaluation:
     canonical_reply = _nonrepeating_fallback(case, session, canonical_reply)
     nonverbal_cue, response_latency = authored_expression_fallback(case, session)
-    if action_assessment is not None:
+    if action_assessment is not None and action_assessment.generated:
         rating = (
             "appropriate"
             if action_assessment.suitability_score >= 4
@@ -824,10 +906,45 @@ def _fallback_evaluation(
             nonverbal_cue,
             response_latency,
         )
+    if action_status == "supportive_only":
+        supportive_feedback = {
+            "address_correction": (
+                "The introduction was recorded, and the patient's preferred form of address still needs attention."
+            ),
+            "permission_to_talk": (
+                "Permission to continue the conversation was recorded. This remains separate from consent to treatment or hands-on care."
+            ),
+            "introduction": (
+                "The introduction was recorded as supportive communication. It does not change the clinical pathway."
+            ),
+            "closing": (
+                "The closing communication was recorded without changing clinical facts."
+            ),
+        }.get(
+            interaction_intent,
+            "Supportive communication was recorded without changing clinical facts.",
+        )
+        return InteractionEvaluation(
+            "unclear" if interaction_intent == "address_correction" else "appropriate",
+            supportive_feedback,
+            canonical_reply,
+            False,
+            nonverbal_cue,
+            response_latency,
+        )
+    if interaction_intent == "medication_history":
+        return InteractionEvaluation(
+            "unclear",
+            "A question about usual medicines was recorded, but this does not complete the authored allergy and prescription-record check.",
+            canonical_reply,
+            False,
+            nonverbal_cue,
+            response_latency,
+        )
     if action_status == "unrecognised":
         return InteractionEvaluation(
             "unclear",
-            "The proposed action could not be matched to an educator-authored pathway and needs facilitator review.",
+            "The action was recorded but was not automatically interpreted. Review its meaning with a facilitator.",
             canonical_reply,
             False,
             nonverbal_cue,
@@ -889,12 +1006,18 @@ def generate_interaction_evaluation(
     canonical_reply: str,
     matched_action_label: str | None = None,
     action_assessment: ActionAssessment | None = None,
+    interaction_intent: str | None = None,
     model=None,
 ) -> InteractionEvaluation:
     """Evaluate action and speech together without allowing AI to change state."""
 
     fallback = _fallback_evaluation(
-        case, session, action_status, canonical_reply, action_assessment
+        case,
+        session,
+        action_status,
+        canonical_reply,
+        action_assessment,
+        interaction_intent,
     )
     context = {
         "patient": {
@@ -909,6 +1032,7 @@ def generate_interaction_evaluation(
         "state_after_deterministic_action": _known_state(case, session["state"]),
         "learner_proposed_action": action_text,
         "learner_spoken_words": dialogue_text,
+        "recognised_conversation_intent": interaction_intent,
         "deterministic_action_status": action_status,
         "matched_authored_action": matched_action_label,
         "action_suitability_assessment": (
