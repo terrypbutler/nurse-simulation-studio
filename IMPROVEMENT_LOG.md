@@ -14,6 +14,13 @@ Status: Review complete; implementation deferred until credits are available.
 
 ### P0 — Correct false-negative interaction scoring
 
+Implementation update, 2026-08-28: **Completed for the authored fallback path.**
+The matcher now considers action and spoken wording together, recognises narrow
+clinical concepts and common identity variants, keeps explicit-action safeguards,
+uses intent-specific offline replies, and leaves unmatched turns unscored. The
+supplied introduction, identification and medication transcript is covered by
+automated and browser-level regression checks.
+
 A clinically sensible turn was tested with both fields completed:
 
 - Action: “I introduce myself, confirm how Mrs Shaw would like to be addressed, and ask permission to discuss her pain.”
@@ -121,4 +128,3 @@ Recommended change:
 - Learner-safe export and separation of facilitator-only notes.
 - Authored fallbacks when an AI provider is unavailable.
 - Strong unit coverage for the simulation engine, AI safety boundaries, scenario validation and publishing.
-

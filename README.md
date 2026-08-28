@@ -50,6 +50,7 @@ py .\sample_patients\validate_cases.py
 - Free-text nursing actions with educator-authored prerequisite checks
 - AI interpretation of natural-language actions with a 1–5 suitability range
 - Dialogue-only progression for conversational actions, with bounded multi-action recognition
+- Combined action-and-speech concept matching and intent-specific replies in authored fallback mode
 - Semantic action recognition separated from formative quality scoring
 - Scrollable live transcript beside the interaction controls
 - Explicit action descriptions retained for observations, administration, escalation and hands-on care
