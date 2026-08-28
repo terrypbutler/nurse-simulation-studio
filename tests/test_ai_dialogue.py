@@ -503,7 +503,7 @@ class PatientDialogueTests(unittest.TestCase):
             )
         )
 
-    def test_counterproductive_action_does_not_apply_from_semantic_match(self):
+    def test_counterproductive_action_can_progress_for_debrief(self):
         assessment = ActionAssessment(
             "check_identity",
             1,
@@ -518,7 +518,7 @@ class PatientDialogueTests(unittest.TestCase):
             for item in self.case["allowed_actions"]
             if item["action_id"] == "check_identity"
         )
-        self.assertFalse(
+        self.assertTrue(
             recognised_action_can_apply(
                 assessment,
                 action,

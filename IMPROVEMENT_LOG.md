@@ -135,3 +135,21 @@ Recommended change:
 - Learner-safe export and separation of facilitator-only notes.
 - Authored fallbacks when an AI provider is unavailable.
 - Strong unit coverage for the simulation engine, AI safety boundaries, scenario validation and publishing.
+
+## 2026-08-28 — Permissive pathway progression
+
+Implemented after rehearsal feedback showed that clinically problematic actions were
+stalling the encounter instead of becoming useful debrief material.
+
+- Plain-language record checks such as “I'm gonna check records” now satisfy Eleanor
+  Shaw's simulated allergy and prescription-record step.
+- Explicit administration wording such as “Give pain-killing medication” is recognised
+  even when the AI assessor does not return a pathway mapping.
+- An authored action can proceed when earlier pathway steps were omitted. The action log
+  records `completed_with_omissions`, the unmet prerequisites, and the authored safety
+  explanation.
+- The debrief separates cleanly completed steps from **Completed with pathway gaps** and
+  still lists authored steps that were never reached.
+- Counterproductive wording remains eligible for formative scoring and debrief critique;
+  it no longer prevents the simulated pathway action from occurring.
+- Regression suite: 66 tests passing, plus compilation and diff checks.

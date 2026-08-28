@@ -711,6 +711,7 @@ def render_simulation(facilitator_mode: bool) -> None:
                             action_id,
                             minutes=2 if not applied_actions else 0,
                             learner_text=action_clean or None,
+                            allow_unmet_preconditions=True,
                         )
                         if not action_result.applied:
                             blocked_attempts.append(
@@ -722,8 +723,31 @@ def render_simulation(facilitator_mode: bool) -> None:
                         applied_actions.append(latest_action)
                         canonical_replies.append(action_result.message)
 
+                if not applied_actions and action_clean:
+                    fallback_action_id = match_action_id(case, action_clean)
+                    if fallback_action_id:
+                        fallback_result = apply_action(
+                            case,
+                            session,
+                            fallback_action_id,
+                            learner_text=action_clean,
+                            allow_unmet_preconditions=True,
+                        )
+                        if fallback_result.applied:
+                            remove_latest_patient_response(session)
+                            latest_action = session["action_log"][-1]
+                            applied_actions.append(latest_action)
+                            canonical_replies.append(fallback_result.message)
+
                 if applied_actions:
-                    action_status = "applied"
+                    action_status = (
+                        "applied_with_omissions"
+                        if any(
+                            item.get("status") == "completed_with_omissions"
+                            for item in applied_actions
+                        )
+                        else "applied"
+                    )
                     canonical_reply = " ".join(canonical_replies)
                     matched_action_label = "; ".join(
                         item["label"] for item in applied_actions
@@ -779,6 +803,7 @@ def render_simulation(facilitator_mode: bool) -> None:
                                 session,
                                 "measure_observations",
                                 learner_text=action_clean,
+                                allow_unmet_preconditions=True,
                             )
                             if full_result.applied:
                                 remove_latest_patient_response(session)
@@ -889,6 +914,7 @@ def render_simulation(facilitator_mode: bool) -> None:
                                 inferred_id,
                                 minutes=2 if action_clean else 1,
                                 learner_text=action_clean or None,
+                                allow_unmet_preconditions=True,
                             )
                             if inferred_result.applied:
                                 latest_action = session["action_log"][-1]
@@ -995,6 +1021,7 @@ def render_simulation(facilitator_mode: bool) -> None:
                 )
                 fallback_score = {
                     "applied": 4,
+                    "applied_with_omissions": 2,
                     "blocked": 2,
                     "clinical_check": 4,
                 }.get(action_status)
@@ -1018,7 +1045,7 @@ def render_simulation(facilitator_mode: bool) -> None:
                             action_assessment.relevance_category
                             if action_assessment and action_assessment.generated
                             else "direct"
-                            if action_status == "applied"
+                            if action_status in {"applied", "applied_with_omissions"}
                             else "supportive"
                             if action_status == "supportive_only"
                             else "unclear"
@@ -1156,8 +1183,14 @@ def render_pathway_review(case: dict, session: dict) -> None:
             str(item.get("reason", "An authored prerequisite was missing.")),
         )
         blocked_groups[key] = blocked_groups.get(key, 0) + 1
+    omission_logs = [
+        item for item in logs if item.get("status") == "completed_with_omissions"
+    ]
+    omission_ids = {item.get("action_id") for item in omission_logs}
     completed = [
-        action for action in case["allowed_actions"] if action["action_id"] in applied_ids
+        action
+        for action in case["allowed_actions"]
+        if action["action_id"] in applied_ids and action["action_id"] not in omission_ids
     ]
     not_reached = [
         action
@@ -1174,6 +1207,15 @@ def render_pathway_review(case: dict, session: dict) -> None:
         with st.expander(f"Completed authored steps · {len(completed)}"):
             for action in completed:
                 st.markdown(f"- {action['label']}")
+    if omission_logs:
+        with st.expander(
+            f"Completed with pathway gaps · {len(omission_logs)}",
+            expanded=True,
+        ):
+            for item in omission_logs:
+                st.markdown(
+                    f"- **{item['label']}** — {item.get('reason', 'An authored prerequisite was missing.')}"
+                )
     if blocked_groups:
         with st.expander(
             f"Attempted but not completed · {len(blocked_groups)}",
@@ -1186,7 +1228,7 @@ def render_pathway_review(case: dict, session: dict) -> None:
         with st.expander(f"Not reached in this run · {len(not_reached)}", expanded=True):
             for action in not_reached:
                 st.markdown(f"- {action['label']}")
-    if not blocked_groups and not not_reached:
+    if not omission_logs and not blocked_groups and not not_reached:
         st.success("All authored pathway steps were reached during this run.")
 
 

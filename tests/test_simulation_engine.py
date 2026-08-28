@@ -216,6 +216,30 @@ class SimulationEngineTests(unittest.TestCase):
             ),
             "check_allergies_and_prescription",
         )
+        self.assertEqual(
+            match_action_id(self.case, "I'm gonna check records."),
+            "check_allergies_and_prescription",
+        )
+
+    def test_out_of_sequence_action_can_continue_with_debrief_evidence(self):
+        result = apply_action(
+            self.case,
+            self.session,
+            "administer_charted_option",
+            learner_text="Give pain-killing medication.",
+            allow_unmet_preconditions=True,
+        )
+        self.assertTrue(result.applied)
+        self.assertTrue(self.session["state"]["analgesia_administered"])
+        latest = self.session["action_log"][-1]
+        self.assertEqual(latest["status"], "completed_with_omissions")
+        self.assertIn("consent_state", latest["missing_preconditions"])
+
+    def test_plain_language_administration_is_recognised(self):
+        self.assertEqual(
+            match_action_id(self.case, "Give pain-killing medication."),
+            "administer_charted_option",
+        )
 
     def test_unmatched_action_is_logged_without_clinical_change(self):
         original_state = deepcopy(self.session["state"])

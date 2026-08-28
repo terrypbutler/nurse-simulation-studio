@@ -126,8 +126,6 @@ def recognised_action_can_apply(
 
     if not assessment.generated or confidence < ACTION_MAPPING_CONFIDENCE:
         return False
-    if assessment.relevance_category == "counterproductive":
-        return False
     if action_requires_explicit_description(action):
         return bool(action_text.strip()) and evidence_source in {
             "proposed_action",

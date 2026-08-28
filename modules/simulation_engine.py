@@ -55,6 +55,7 @@ ACTION_WORD_ALIASES = {
     "medicines": "medication",
     "painful": "pain",
     "prescriptions": "prescription",
+    "records": "record",
     "severe": "severity",
 }
 
@@ -258,9 +259,13 @@ def _concept_action_candidates(words: set[str]) -> list[tuple[int, str]]:
         candidates.append((4, "assess_pain"))
 
     record_words = {"chart", "record", "prescription"}
-    medicine_words = {"allergy", "medication", "prescription"}
-    if words & checking_words and words & record_words and words & medicine_words:
+    if words & checking_words and words & record_words:
         candidates.append((5, "check_allergies_and_prescription"))
+
+    administration_words = {"administer", "give"}
+    analgesia_words = {"analgesia", "medication", "pain", "painkiller"}
+    if words & administration_words and words & analgesia_words:
+        candidates.append((5, "administer_charted_option"))
     return candidates
 
 
@@ -293,6 +298,10 @@ def match_action_id(case: dict[str, Any], text: str) -> str | None:
 
     if not candidates:
         return None
+    best_by_action: dict[str, int] = {}
+    for score, action_id in candidates:
+        best_by_action[action_id] = max(score, best_by_action.get(action_id, 0))
+    candidates = [(score, action_id) for action_id, score in best_by_action.items()]
     candidates.sort(reverse=True)
     if len(candidates) > 1 and candidates[0][0] == candidates[1][0]:
         return None
@@ -305,6 +314,7 @@ def apply_action(
     action_id: str,
     minutes: int = 2,
     learner_text: str | None = None,
+    allow_unmet_preconditions: bool = False,
 ) -> ActionResult:
     """Apply one authored action and then resolve time-based events."""
 
@@ -312,7 +322,12 @@ def apply_action(
         return ActionResult(False, blocked)
 
     action = _find_action(case, action_id)
-    if not _conditions_met(session["state"], action["preconditions"]):
+    missing_preconditions = {
+        key: {"expected": expected, "actual": session["state"].get(key)}
+        for key, expected in action["preconditions"].items()
+        if session["state"].get(key) != expected
+    }
+    if missing_preconditions and not allow_unmet_preconditions:
         return ActionResult(
             False,
             action.get("blocked_message", "The required earlier step has not been completed."),
@@ -340,14 +355,24 @@ def apply_action(
             "minute": session["state"]["elapsed_minutes"],
         }
     )
-    session["action_log"].append(
-        {
-            "action_id": action_id,
-            "label": action["label"],
-            "minute": session["state"]["elapsed_minutes"],
-            "applied": True,
-        }
-    )
+    log_entry = {
+        "action_id": action_id,
+        "label": action["label"],
+        "minute": session["state"]["elapsed_minutes"],
+        "applied": True,
+    }
+    if missing_preconditions:
+        log_entry.update(
+            {
+                "status": "completed_with_omissions",
+                "reason": action.get(
+                    "blocked_message",
+                    "One or more authored pathway prerequisites were not completed first.",
+                ),
+                "missing_preconditions": missing_preconditions,
+            }
+        )
+    session["action_log"].append(log_entry)
     fired = _resolve_due_events(case, session)
     return ActionResult(True, response, new_cues, fired)
 
