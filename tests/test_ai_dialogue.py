@@ -296,7 +296,7 @@ class PatientDialogueTests(unittest.TestCase):
         self.assertNotIn("facilitator_only", captured["prompt"])
         self.assertNotIn("expected_safety_points", captured["prompt"])
 
-    def test_ai_assesses_unscripted_action_on_one_to_five_scale(self):
+    def test_ai_assesses_unscripted_action_on_qualitative_range(self):
         captured = {}
 
         class FakeModel:
@@ -305,7 +305,7 @@ class PatientDialogueTests(unittest.TestCase):
                 captured["config"] = generation_config
                 return types.SimpleNamespace(
                     text=(
-                        '{"matched_action_id":"check_identity","suitability_score":5,'
+                        '{"matched_action_id":"check_identity","suitability_band":"strongly_appropriate",'
                         '"relevance_category":"direct",'
                         '"confidence":0.91,"rationale":"This is timely and supports safe '
                         'identification before further care."}'
@@ -322,12 +322,20 @@ class PatientDialogueTests(unittest.TestCase):
 
         self.assertTrue(assessment.generated)
         self.assertEqual(assessment.matched_action_id, "check_identity")
-        self.assertEqual(assessment.suitability_score, 5)
         self.assertEqual(assessment.suitability_band, "strongly_appropriate")
         self.assertEqual(assessment.relevance_category, "direct")
         self.assertAlmostEqual(assessment.confidence, 0.91)
         schema = captured["config"]["response_schema"]
-        self.assertEqual(schema["properties"]["suitability_score"]["minimum"], 1)
+        self.assertEqual(
+            schema["properties"]["suitability_band"]["enum"],
+            [
+                "clearly_concerning",
+                "concerning",
+                "mixed_or_unclear",
+                "appropriate",
+                "strongly_appropriate",
+            ],
+        )
         self.assertIn("check_identity", schema["properties"]["matched_action_id"]["enum"])
         self.assertIn("Consent and dignity", captured["prompt"])
         self.assertIn("case_specific_educator_rubric", captured["prompt"])
@@ -347,7 +355,7 @@ class PatientDialogueTests(unittest.TestCase):
                         '"evidence_source":"spoken_words"},'
                         '{"action_id":"assess_pain","confidence":0.9,'
                         '"evidence_source":"spoken_words"}],'
-                        '"suitability_score":5,"relevance_category":"direct",'
+                        '"suitability_band":"strongly_appropriate","relevance_category":"direct",'
                         '"rationale":"The learner clearly checks identity and then explores pain."}'
                     )
                 )
@@ -384,7 +392,7 @@ class PatientDialogueTests(unittest.TestCase):
                     text=(
                         '{"matched_actions":[{"action_id":"assess_pain",'
                         '"confidence":0.94,"evidence_source":"spoken_words"}],'
-                        '"suitability_score":5,"relevance_category":"direct",'
+                        '"suitability_band":"strongly_appropriate","relevance_category":"direct",'
                         '"rationale":"A focused person-centred assessment.",'
                         '"criterion_evidence":[{"criterion_id":"assessment",'
                         '"finding":"demonstrated","evidence_quote":"' + words + '",'
@@ -410,7 +418,7 @@ class PatientDialogueTests(unittest.TestCase):
             def generate_content(self, _prompt, generation_config=None):
                 return types.SimpleNamespace(
                     text=(
-                        '{"matched_actions":[],"suitability_score":3,'
+                        '{"matched_actions":[],"suitability_band":"mixed_or_unclear",'
                         '"relevance_category":"unclear","rationale":"Needs review.",'
                         '"criterion_evidence":[{"criterion_id":"assessment",'
                         '"finding":"demonstrated","evidence_quote":"I completed everything",'
@@ -433,7 +441,7 @@ class PatientDialogueTests(unittest.TestCase):
                     text=(
                         '{"matched_actions":[{"action_id":"administer_charted_option",'
                         '"confidence":0.99,"evidence_source":"proposed_action"}],'
-                        '"suitability_score":5,"relevance_category":"direct",'
+                        '"suitability_band":"strongly_appropriate","relevance_category":"direct",'
                         '"rationale":"The learner mentions giving pain relief."}'
                     )
                 )
@@ -460,7 +468,7 @@ class PatientDialogueTests(unittest.TestCase):
                     text=(
                         '{"matched_actions":[{"action_id":"administer_charted_option",'
                         '"confidence":0.95,"evidence_source":"both"}],'
-                        '"suitability_score":4,"relevance_category":"direct",'
+                        '"suitability_band":"appropriate","relevance_category":"direct",'
                         '"rationale":"The proposed action explicitly describes administration."}'
                     )
                 )
@@ -478,10 +486,9 @@ class PatientDialogueTests(unittest.TestCase):
             ("administer_charted_option",),
         )
 
-    def test_recognised_action_can_apply_even_when_formative_score_is_low(self):
+    def test_recognised_action_can_apply_even_when_suitability_is_concerning(self):
         assessment = ActionAssessment(
             "check_identity",
-            2,
             "concerning",
             "direct",
             0.92,
@@ -506,7 +513,6 @@ class PatientDialogueTests(unittest.TestCase):
     def test_counterproductive_action_can_progress_for_debrief(self):
         assessment = ActionAssessment(
             "check_identity",
-            1,
             "clearly_concerning",
             "counterproductive",
             0.95,
@@ -539,12 +545,12 @@ class PatientDialogueTests(unittest.TestCase):
         second = authored_dialogue_fallback(self.case, self.session)
         self.assertNotEqual(first, second)
 
-    def test_reasonable_unbounded_action_can_be_scored_without_state_mapping(self):
+    def test_reasonable_unbounded_action_can_be_classified_without_state_mapping(self):
         class FakeModel:
             def generate_content(self, _prompt, generation_config=None):
                 return types.SimpleNamespace(
                     text=(
-                        '{"matched_action_id":"none","suitability_score":4,'
+                        '{"matched_action_id":"none","suitability_band":"appropriate",'
                         '"relevance_category":"supportive",'
                         '"confidence":0.88,"rationale":"This supports comfort without '
                         'claiming a clinical effect."}'
@@ -557,7 +563,7 @@ class PatientDialogueTests(unittest.TestCase):
             "I adjust the pillows for comfort.",
             model=FakeModel(),
         )
-        self.assertEqual(assessment.suitability_score, 4)
+        self.assertEqual(assessment.suitability_band, "appropriate")
         self.assertEqual(assessment.relevance_category, "supportive")
         self.assertIsNone(assessment.matched_action_id)
         self.assertTrue(assessment.generated)

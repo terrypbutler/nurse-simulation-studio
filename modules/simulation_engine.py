@@ -722,16 +722,6 @@ def replace_latest_patient_response(session: dict[str, Any], text: str) -> bool:
     return False
 
 
-def session_reached_duration(case: dict[str, Any], session: dict[str, Any]) -> bool:
-    """Return whether an active encounter has reached its authored time limit."""
-
-    planned = max(1, int(case.get("estimated_duration_minutes", 15)))
-    return (
-        session.get("status") == "active"
-        and session["state"].get("elapsed_minutes", 0) >= planned
-    )
-
-
 def session_repeated_blocked_action(
     session: dict[str, Any], repeat_limit: int = 3
 ) -> bool:
@@ -758,6 +748,12 @@ def end_session(session: dict[str, Any], reason: str = "manual") -> None:
 def student_export(case: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
     """Return a learner-safe export that excludes facilitator-only content."""
 
+    def without_internal_sequence(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {key: deepcopy(value) for key, value in item.items() if key != "minute"}
+            for item in items
+        ]
+
     return {
         "case_id": case["case_id"],
         "case_title": case["title"],
@@ -765,14 +761,11 @@ def student_export(case: dict[str, Any], session: dict[str, Any]) -> dict[str, A
         "learner_name": session["learner_name"],
         "practice_mode": session.get("practice_mode", "coached"),
         "status": session["status"],
-        "started_at": session["started_at"],
-        "ended_at": session.get("ended_at"),
         "end_reason": session.get("end_reason"),
-        "elapsed_minutes": session["state"]["elapsed_minutes"],
-        "transcript": deepcopy(session["transcript"]),
-        "actions": deepcopy(session["action_log"]),
-        "nursing_notes": deepcopy(session.get("nursing_notes", [])),
-        "clinical_checks": deepcopy(session.get("clinical_check_log", [])),
-        "formative_feedback": deepcopy(session.get("feedback_log", [])),
+        "transcript": without_internal_sequence(session["transcript"]),
+        "actions": without_internal_sequence(session["action_log"]),
+        "nursing_notes": without_internal_sequence(session.get("nursing_notes", [])),
+        "clinical_checks": without_internal_sequence(session.get("clinical_check_log", [])),
+        "formative_feedback": without_internal_sequence(session.get("feedback_log", [])),
         "reflection": deepcopy(session.get("reflection", {})),
     }

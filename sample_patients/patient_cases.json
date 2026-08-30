@@ -8,7 +8,6 @@
       "field": "adult nursing",
       "setting": "orthopaedic ward",
       "complexity": "introductory",
-      "estimated_duration_minutes": 15,
       "patient": {
         "display_name": "Eleanor Shaw",
         "age": 67,
@@ -452,7 +451,6 @@
       "field": "adult nursing",
       "setting": "acute medical assessment unit",
       "complexity": "intermediate",
-      "estimated_duration_minutes": 15,
       "patient": {
         "display_name": "David Morgan",
         "age": 79,
@@ -851,7 +849,6 @@
       "field": "adult nursing",
       "setting": "colorectal surgical ward",
       "complexity": "introductory",
-      "estimated_duration_minutes": 20,
       "patient": {
         "display_name": "Aisha Khan",
         "age": 54,
@@ -1245,7 +1242,6 @@
       "field": "adult nursing",
       "setting": "rehabilitation ward",
       "complexity": "introductory",
-      "estimated_duration_minutes": 15,
       "patient": {
         "display_name": "Peter Chen",
         "age": 62,

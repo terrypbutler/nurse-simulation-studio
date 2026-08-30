@@ -7,7 +7,8 @@ A first Streamlit prototype for supervised nursing-education rehearsal using
 entirely fictional adult patients.
 
 Clinical, consent and persistent patient-experience changes are deterministic
-and educator-authored. An optional Gemini or OpenAI model interprets the
+and educator-authored. OpenAI is the primary AI provider, with Gemini available
+as an alternative. The selected model interprets the
 learner's proposed action and spoken words, then phrases a synthetic-patient
 reply and bounded non-verbal cue. It cannot change simulation state, provide
 medication doses or make competence decisions. Authored dialogue and behaviour
@@ -48,10 +49,10 @@ py .\sample_patients\validate_cases.py
 - Coached mode with immediate feedback and immersive mode with delayed feedback
 - A clinical workspace for handover, observations, records, environment and notes
 - Free-text nursing actions with educator-authored prerequisite checks
-- AI interpretation of natural-language actions with a 1–5 suitability range
+- AI interpretation of natural-language actions with a five-band qualitative suitability range
 - Dialogue-only progression for conversational actions, with bounded multi-action recognition
 - Combined action-and-speech concept matching and intent-specific replies in authored fallback mode
-- Semantic action recognition separated from formative quality scoring
+- Semantic action recognition separated from qualitative formative assessment
 - Scrollable live transcript beside the interaction controls
 - Explicit action descriptions retained for observations, administration, escalation and hands-on care
 - Patient-specific fictional observations generated within validated bounds around an authored baseline
@@ -60,8 +61,8 @@ py .\sample_patients\validate_cases.py
 - Combined action-and-dialogue submission with patient-state-aware formative feedback
 - Richer bounded state for trust, emotion, fatigue, overload, understanding,
   confusion, dignity and consent
-- Deterministic, condition-aware time consequences
-- Time-bounded encounters that end at the authored duration or after a blocked step repeats
+- Deterministic, condition-aware scenario consequences
+- Open-ended encounters that conclude when the learner chooses, or after a blocked step repeats
 - Natural patient dialogue, response latency and educator-authored non-verbal cues
 - Durable fact and conversation-move memory with recent-reply repetition checks
 - Quote-linked evidence for each case-specific educator criterion
@@ -100,7 +101,7 @@ unavailable or unsafe. New scenario content is authored in the separate
 The **Scenario editor** page lets an authorised educator describe a new learning
 encounter—or changes to an existing one—in ordinary language. It asks about the
 fictional patient, learning purpose, opening situation, expected learner actions,
-timed consequences and debrief. The selected AI provider turns those answers
+scenario consequences and debrief. The selected AI provider turns those answers
 into the complete Studio format, validates it, shows an educator-readable
 summary and accepts further plain-language revisions. Technical JSON is hidden
 in an optional review panel, and the original structured editor remains
@@ -131,7 +132,7 @@ Studio's five-minute cache.
 
 Action suitability uses five educator-reviewable dimensions: patient-centredness,
 effectiveness and relevance, safety and timing, consent and dignity, and
-communication and professional trust. AI can score any proposed action, but it
+communication and professional trust. AI assigns a qualitative suitability band, but it
 can only change simulation state when it confidently maps an appropriate action
 to one of the case's bounded, educator-authored transitions.
 

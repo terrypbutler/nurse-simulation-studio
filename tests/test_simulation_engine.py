@@ -15,7 +15,6 @@ from modules.simulation_engine import (
     record_unmapped_action,
     start_session,
     student_export,
-    session_reached_duration,
     session_repeated_blocked_action,
 )
 
@@ -84,15 +83,13 @@ class SimulationEngineTests(unittest.TestCase):
         self.assertEqual(self.session["action_log"][-1]["status"], "blocked")
         self.assertFalse(self.session["action_log"][-1]["applied"])
 
-    def test_authored_duration_can_end_session_with_reason(self):
-        self.session["state"]["elapsed_minutes"] = (
-            self.case["estimated_duration_minutes"]
-        )
-        self.assertTrue(session_reached_duration(self.case, self.session))
-        end_session(self.session, reason="planned_duration")
+    def test_learner_export_omits_internal_time_metadata(self):
+        self.session["state"]["elapsed_minutes"] = 30
         exported = student_export(self.case, self.session)
-        self.assertEqual(exported["status"], "ended")
-        self.assertEqual(exported["end_reason"], "planned_duration")
+        self.assertNotIn("elapsed_minutes", exported)
+        self.assertNotIn("started_at", exported)
+        self.assertNotIn("ended_at", exported)
+        self.assertTrue(all("minute" not in item for item in exported["transcript"]))
 
     def test_repeated_blocked_action_can_end_stalled_session(self):
         for _ in range(3):

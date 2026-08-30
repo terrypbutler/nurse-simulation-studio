@@ -11,7 +11,7 @@ AUTHORING_MODEL = "scenario-authoring"
 GEMINI_DIALOGUE_MODEL = "gemini-3.5-flash-lite"
 OPENAI_DIALOGUE_MODEL = "gpt-5.6-terra"
 
-_provider = GEMINI_PROVIDER
+_provider = OPENAI_PROVIDER
 _gemini_client = None
 _openai_client = None
 
@@ -28,8 +28,8 @@ class ModelResponse:
 def selected_provider() -> str:
     import streamlit as st
 
-    selected = st.session_state.get(PROVIDER_OPTION_KEY, GEMINI_PROVIDER)
-    return selected if selected in {GEMINI_PROVIDER, OPENAI_PROVIDER} else GEMINI_PROVIDER
+    selected = st.session_state.get(PROVIDER_OPTION_KEY, OPENAI_PROVIDER)
+    return selected if selected in {GEMINI_PROVIDER, OPENAI_PROVIDER} else OPENAI_PROVIDER
 
 
 def provider_name() -> str:
@@ -41,7 +41,7 @@ def render_provider_options() -> str:
 
     return st.radio(
         "AI provider",
-        [GEMINI_PROVIDER, OPENAI_PROVIDER],
+        [OPENAI_PROVIDER, GEMINI_PROVIDER],
         horizontal=True,
         key=PROVIDER_OPTION_KEY,
         help=(

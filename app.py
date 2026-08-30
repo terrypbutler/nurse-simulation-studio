@@ -21,6 +21,7 @@ from modules.clinical_observations import (
 from modules.patient_dialogue import (
     ACTION_MAPPING_CONFIDENCE,
     ASSESSMENT_CRITERIA,
+    SUITABILITY_BANDS,
     action_requires_explicit_description,
     assess_interaction_actions,
     authored_interaction_fallback,
@@ -47,7 +48,6 @@ from modules.simulation_engine import (
     record_unmapped_action,
     remove_latest_patient_response,
     session_repeated_blocked_action,
-    session_reached_duration,
     start_session,
     student_export,
 )
@@ -220,13 +220,9 @@ def render_home() -> None:
     st.subheader("Included practice cases")
     for case in CASES:
         with st.container(border=True):
-            left, right = st.columns([3, 1])
-            with left:
-                st.markdown(f"#### {case['patient']['display_name']} · {case['title']}")
-                st.write(case["clinical"]["presenting_context"])
-                st.caption(f"{case['setting'].title()} · {case['complexity'].title()}")
-            with right:
-                st.metric("Suggested time", f"{case['estimated_duration_minutes']} min")
+            st.markdown(f"#### {case['patient']['display_name']} · {case['title']}")
+            st.write(case["clinical"]["presenting_context"])
+            st.caption(f"{case['setting'].title()} · {case['complexity'].title()}")
 
 
 def render_library() -> None:
@@ -300,7 +296,7 @@ def render_prebrief(case: dict, session: dict) -> None:
         for item in prebrief["ground_rules"]:
             st.markdown(f"- {item}")
     st.info(
-        "In immersive practice, interaction scores remain hidden until the simulation ends. "
+        "In immersive practice, interaction feedback remains hidden until the simulation ends. "
         "The patient response and visible scenario changes remain available."
         if session["practice_mode"] == "immersive"
         else "In coached practice, formative feedback appears after each interaction."
@@ -325,7 +321,7 @@ def render_transcript(session: dict) -> None:
         st.markdown(
             f"""
             <div class="transcript {css_role}">
-              <div class="minute">Minute {item['minute']} · {escape(str(item['speaker']))}{latency_label}</div>
+              <div class="minute">{escape(str(item['speaker']))}{latency_label}</div>
               <div>{escape(str(item['text']))}</div>
             </div>
             """,
@@ -346,10 +342,9 @@ def render_state(case: dict, session: dict, facilitator_mode: bool) -> None:
         """,
         unsafe_allow_html=True,
     )
-    metric_cols = st.columns(3)
-    metric_cols[0].metric("Scenario time", f"{state['elapsed_minutes']} min")
-    metric_cols[1].metric("Actions recorded", len(session["action_log"]))
-    metric_cols[2].metric("Mode", session.get("practice_mode", "coached").title())
+    metric_cols = st.columns(2)
+    metric_cols[0].metric("Actions recorded", len(session["action_log"]))
+    metric_cols[1].metric("Mode", session.get("practice_mode", "coached").title())
 
     patient_tab, handover_tab, observations_tab, records_tab, environment_tab, notes_tab = st.tabs(
         ["Patient", "Handover", "Observations", "Records", "Environment", "Notes"]
@@ -389,7 +384,7 @@ def render_state(case: dict, session: dict, facilitator_mode: bool) -> None:
             st.markdown("**Checks completed during this encounter**")
             for item in session["clinical_check_log"]:
                 source = "AI-generated training values" if item["source"] == "bounded_ai" else "authored baseline"
-                st.write(f"Minute {item['minute']}: {item['result']} ({source})")
+                st.write(f"{item['result']} ({source})")
 
     with records_tab:
         records = case["clinical_workspace"].get("record_access", [])
@@ -413,7 +408,7 @@ def render_state(case: dict, session: dict, facilitator_mode: bool) -> None:
 
     with notes_tab:
         for note in session.get("nursing_notes", []):
-            st.caption(f"Minute {note['minute']} · {note['author']}")
+            st.caption(note["author"])
             st.write(note["text"])
         with st.form(f"nursing_note_{case['case_id']}", clear_on_submit=True):
             note_text = st.text_area(
@@ -435,7 +430,7 @@ def render_state(case: dict, session: dict, facilitator_mode: bool) -> None:
 
     if facilitator_mode:
         with st.expander("Facilitator-only state", expanded=False):
-            st.json(state)
+            st.json({key: value for key, value in state.items() if key != "elapsed_minutes"})
             st.markdown("**Expected safety points**")
             for item in case["facilitator_only"]["expected_safety_points"]:
                 st.markdown(f"- {item}")
@@ -453,20 +448,13 @@ def render_latest_feedback(session: dict) -> None:
         "unclear": "Unclear — facilitator review needed",
     }
     st.markdown("#### Formative interaction feedback")
-    score = latest.get("suitability_score")
-    if score is not None:
-        score_labels = {
-            1: "Clearly concerning",
-            2: "Concerning",
-            3: "Mixed or unclear",
-            4: "Appropriate",
-            5: "Strongly appropriate",
-        }
+    suitability_band = latest.get("suitability_band")
+    if suitability_band:
         st.markdown(
-            f"**Provisional turn-level action score: {score}/5 — {score_labels[score]}**"
+            f"**Suitability: {suitability_band.replace('_', ' ').title()}**"
         )
     else:
-        st.markdown("**Not automatically scored — facilitator review available**")
+        st.markdown("**Suitability: Facilitator review available**")
     relevance = latest.get("relevance_category")
     if relevance:
         st.caption(f"Relevance to this moment: {relevance.replace('_', ' ').title()}")
@@ -495,6 +483,10 @@ def render_latest_feedback(session: dict) -> None:
                 f"- **{label} — {finding['finding'].title()}:** “{finding['evidence_quote']}”"
             )
     with st.expander("How action suitability is judged", expanded=False):
+        st.markdown(
+            "**Suitability range:** "
+            + " → ".join(item.replace("_", " ").title() for item in SUITABILITY_BANDS)
+        )
         for criterion in ASSESSMENT_CRITERIA:
             st.markdown(f"- {criterion}")
         st.markdown("**Case-specific educator criteria**")
@@ -509,23 +501,22 @@ def render_feedback_history(session: dict) -> None:
         return
     for index, item in enumerate(feedback_log, start=1):
         with st.expander(
-            f"Interaction {index} · minute {item.get('minute', 0)} · "
-            f"{item.get('rating', 'unclear').title()}",
+            f"Interaction {index} · {item.get('rating', 'unclear').title()}",
             expanded=index == len(feedback_log),
         ):
             if item.get("action"):
                 st.markdown(f"**Action:** {item['action']}")
             if item.get("dialogue"):
                 st.markdown(f"**Words:** {item['dialogue']}")
-            score = item.get("suitability_score")
+            suitability_band = item.get("suitability_band")
             relevance = item.get("relevance_category")
-            if score is not None:
+            if suitability_band:
                 st.write(
-                    f"Suitability {score}/5"
+                    f"Suitability: {suitability_band.replace('_', ' ').title()}"
                     + (f" · {relevance.replace('_', ' ').title()} relevance" if relevance else "")
                 )
             else:
-                st.write("Not automatically scored")
+                st.write("Suitability: facilitator review available")
             st.write(item.get("feedback", "No feedback text was recorded."))
             findings = item.get("rubric_findings", [])
             if findings:
@@ -575,7 +566,7 @@ def render_rubric_evidence_review(session: dict) -> None:
                 st.info("No traceable evidence was identified for this criterion.")
             for finding in findings:
                 st.markdown(
-                    f"**Minute {finding['minute']} · {finding['finding'].title()}**  \n"
+                    f"**{finding['finding'].title()}**  \n"
                     f"“{finding['evidence_quote']}”"
                 )
                 st.caption(finding["rationale"])
@@ -1019,27 +1010,21 @@ def render_simulation(facilitator_mode: bool) -> None:
                     disclosed_fact_ids=evaluation.disclosed_fact_ids,
                     conversation_move=evaluation.conversation_move,
                 )
-                fallback_score = {
-                    "applied": 4,
-                    "applied_with_omissions": 2,
-                    "blocked": 2,
-                    "clinical_check": 4,
+                fallback_suitability_band = {
+                    "applied": "appropriate",
+                    "applied_with_omissions": "concerning",
+                    "blocked": "concerning",
+                    "clinical_check": "appropriate",
                 }.get(action_status)
                 session.setdefault("feedback_log", []).append(
                     {
-                        "minute": session["state"]["elapsed_minutes"],
                         "action": action_clean,
                         "dialogue": dialogue_clean,
                         "action_status": action_status,
-                        "suitability_score": (
-                            action_assessment.suitability_score
-                            if action_assessment and action_assessment.generated
-                            else fallback_score
-                        ),
                         "suitability_band": (
                             action_assessment.suitability_band
                             if action_assessment and action_assessment.generated
-                            else None
+                            else fallback_suitability_band
                         ),
                         "relevance_category": (
                             action_assessment.relevance_category
@@ -1049,11 +1034,6 @@ def render_simulation(facilitator_mode: bool) -> None:
                             else "supportive"
                             if action_status == "supportive_only"
                             else "unclear"
-                        ),
-                        "mapping_confidence": (
-                            action_assessment.confidence
-                            if action_assessment and action_assessment.generated
-                            else None
                         ),
                         "matched_action_id": (
                             action_assessment.matched_action_id
@@ -1077,7 +1057,6 @@ def render_simulation(facilitator_mode: bool) -> None:
                                 "finding": finding.finding,
                                 "evidence_quote": finding.evidence_quote,
                                 "rationale": finding.rationale,
-                                "confidence": finding.confidence,
                             }
                             for finding in (
                                 action_assessment.rubric_findings
@@ -1090,14 +1069,10 @@ def render_simulation(facilitator_mode: bool) -> None:
                     }
                 )
                 stalled = session_repeated_blocked_action(session)
-                reached_duration = session_reached_duration(case, session)
-                if stalled or reached_duration:
+                if stalled:
                     completion_text = (
                         "The same blocked step has been attempted repeatedly. Continue "
                         "with the prerequisite gap and reflection in the debrief."
-                        if stalled
-                        else "The planned encounter time has ended. Continue with the "
-                        "pathway review and reflection in the debrief."
                     )
                     session["transcript"].append(
                         {
@@ -1107,21 +1082,14 @@ def render_simulation(facilitator_mode: bool) -> None:
                             "minute": session["state"]["elapsed_minutes"],
                         }
                     )
-                    end_session(
-                        session,
-                        reason=(
-                            "repeated_blocked_action"
-                            if stalled
-                            else "planned_duration"
-                        ),
-                    )
+                    end_session(session, reason="repeated_blocked_action")
                 st.rerun()
 
         if session.get("practice_mode") == "coached":
             render_latest_feedback(session)
         elif session.get("feedback_log"):
             st.caption(
-                "Immersive practice is active: interaction scores and coaching are being held for debrief."
+                "Immersive practice is active: interaction feedback is being held for debrief."
             )
 
     st.divider()
@@ -1244,10 +1212,9 @@ def render_debrief(facilitator_mode: bool) -> None:
         st.warning("The simulation is still active. End it when you are ready to debrief.")
 
     st.subheader(f"{case['patient']['display_name']} · {case['title']}")
-    cols = st.columns(3)
-    cols[0].metric("Elapsed", f"{session['state']['elapsed_minutes']} min")
-    cols[1].metric("Actions", len(session["action_log"]))
-    cols[2].metric("Visible changes", len(session["state"].get("revealed_cues", [])))
+    cols = st.columns(2)
+    cols[0].metric("Actions", len(session["action_log"]))
+    cols[1].metric("Visible changes", len(session["state"].get("revealed_cues", [])))
 
     if session["status"] == "ended":
         render_pathway_review(case, session)
@@ -1352,13 +1319,6 @@ def render_structured_scenario_editor() -> None:
                 index=complexity_values.index(original["complexity"]),
             )
         with overview_right:
-            duration = st.number_input(
-                "Suggested duration (minutes)",
-                min_value=5,
-                max_value=60,
-                value=int(original["estimated_duration_minutes"]),
-                step=1,
-            )
             version = st.text_input(
                 "Scenario version", value="1.0.0" if new_case else original["scenario_version"]
             )
@@ -1440,7 +1400,7 @@ def render_structured_scenario_editor() -> None:
         with workflow_tab:
             st.info(
                 "These JSON sections control deterministic behaviour. State keys used in actions, "
-                "timed events and the AI contract must agree."
+                "scenario progression and the AI contract must agree."
             )
             clinical_raw = st.text_area(
                 "Clinical context (JSON)", json.dumps(original["clinical"], indent=2), height=280
@@ -1454,7 +1414,9 @@ def render_structured_scenario_editor() -> None:
                 "Initial state (JSON)", json.dumps(original["initial_state"], indent=2), height=260
             )
             time_events_raw = st.text_area(
-                "Timed events (JSON)", json.dumps(original["time_events"], indent=2), height=300
+                "Scenario progression (JSON)",
+                json.dumps(original["time_events"], indent=2),
+                height=300,
             )
             actions_raw = st.text_area(
                 "Learner actions (JSON)", json.dumps(original["allowed_actions"], indent=2), height=380
@@ -1503,7 +1465,6 @@ def render_structured_scenario_editor() -> None:
                     "title": title.strip(),
                     "setting": setting.strip(),
                     "complexity": complexity,
-                    "estimated_duration_minutes": int(duration),
                     "scenario_version": version.strip(),
                     "publication_status": publication_status,
                     "patient": {
@@ -1621,10 +1582,9 @@ def _candidate_library(draft: dict, original_id: str, creating: bool) -> dict:
 
 def _show_draft_summary(draft: dict) -> None:
     st.subheader(f"Draft: {draft['patient']['display_name']} · {draft['title']}")
-    summary = st.columns(3)
+    summary = st.columns(2)
     summary[0].metric("Scenario", draft["case_id"])
     summary[1].metric("Setting", draft["setting"].title())
-    summary[2].metric("Duration", f"{draft['estimated_duration_minutes']} min")
     st.write(draft["clinical"]["presenting_context"])
     left, right = st.columns(2)
     with left:
@@ -1701,7 +1661,7 @@ def render_scenario_editor() -> None:
         with st.chat_message("assistant"):
             st.write(
                 "Describe the encounter as you would to another educator. I’ll turn it into the "
-                "patient profile, learner pathway, dialogue, timed changes and debrief structure."
+                "patient profile, learner pathway, dialogue, scenario changes and debrief structure."
             )
 
     if creating:
@@ -1723,7 +1683,7 @@ def render_scenario_editor() -> None:
                 placeholder="Describe the sensible sequence in everyday language. Include consent, dignity or escalation points where relevant…",
             )
             consequences = st.text_area(
-                "How should the patient or situation change over time?",
+                "How should the patient or situation change as the encounter progresses?",
                 placeholder="What improves after helpful actions? What becomes visible if the learner delays?",
             )
             facilitator = st.text_area(
@@ -1739,7 +1699,7 @@ def render_scenario_editor() -> None:
                 f"Fictional patient: {patient_idea}",
                 f"Opening encounter: {encounter}",
                 f"Expected pathway: {pathway}",
-                f"Timed changes and consequences: {consequences}",
+                f"Scenario changes and consequences: {consequences}",
                 f"Facilitator and debrief: {facilitator}",
             )
         )
@@ -1795,7 +1755,7 @@ def render_scenario_editor() -> None:
     with st.form("scenario_revision"):
         revision = st.text_area(
             "Tell AI what you would like changed",
-            placeholder="For example: make the dialogue less formal, add teach-back before discharge, or remove the timed event…",
+            placeholder="For example: make the dialogue less formal, add teach-back before discharge, or remove a scenario event…",
         )
         revise_clicked = st.form_submit_button("Revise this draft", use_container_width=True)
     if revise_clicked:
@@ -1863,13 +1823,13 @@ def render_about() -> None:
         - Includes prebriefing, a small clinical workspace and learner documentation.
         - Optionally uses constrained AI for natural dialogue and formative interpretation.
         - Falls back to authored dialogue if an API is unavailable.
-        - Uses bounded patient-experience state, non-verbal cues and visible time changes.
+        - Uses bounded patient-experience state, non-verbal cues and visible scenario changes.
         - Supports replay, structured debrief, editable educator criteria and learner-safe export.
 
         ### What it does not do
 
         - Provide clinical guidance or medicine doses.
-        - Calculate a clinical score or recommend treatment.
+        - Make a clinical calculation or recommend treatment.
         - Replace supervision, assessment or real practice learning.
         - Determine learner competence.
         - Allow AI dialogue to change observations, consent or treatment effects.

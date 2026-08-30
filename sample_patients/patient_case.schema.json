@@ -49,7 +49,6 @@
         "field": { "enum": ["adult nursing"] },
         "setting": { "type": "string" },
         "complexity": { "enum": ["introductory", "intermediate"] },
-        "estimated_duration_minutes": { "type": "integer", "minimum": 5, "maximum": 60 },
         "patient": { "type": "object" },
         "learning": { "type": "object" },
         "prebrief": { "$ref": "#/$defs/prebrief" },

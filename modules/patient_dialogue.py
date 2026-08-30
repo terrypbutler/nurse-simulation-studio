@@ -23,6 +23,13 @@ RELEVANCE_CATEGORIES = (
     "unclear",
     "counterproductive",
 )
+SUITABILITY_BANDS = (
+    "clearly_concerning",
+    "concerning",
+    "mixed_or_unclear",
+    "appropriate",
+    "strongly_appropriate",
+)
 CONVERSATION_MOVES = (
     "answer",
     "disclose",
@@ -64,7 +71,6 @@ class RubricFinding:
 @dataclass(frozen=True)
 class ActionAssessment:
     matched_action_id: str | None
-    suitability_score: int
     suitability_band: str
     relevance_category: str
     confidence: float
@@ -122,7 +128,7 @@ def recognised_action_can_apply(
     evidence_source: str,
     action_text: str,
 ) -> bool:
-    """Separate semantic occurrence from formative quality scoring."""
+    """Separate semantic occurrence from qualitative formative assessment."""
 
     if not assessment.generated or confidence < ACTION_MAPPING_CONFIDENCE:
         return False
@@ -394,23 +400,16 @@ def _contains_unsafe_dose(text: str) -> bool:
     )
 
 
-def _score_band(score: int) -> str:
-    return {
-        1: "clearly_concerning",
-        2: "concerning",
-        3: "mixed_or_unclear",
-        4: "appropriate",
-        5: "strongly_appropriate",
-    }[score]
-
-
 def _action_assessment_schema(case: dict[str, Any]) -> dict[str, Any]:
     action_ids = [action["action_id"] for action in case["allowed_actions"]]
     return {
         "type": "object",
         "properties": {
             "matched_action_id": {"type": "string", "enum": ["none", *action_ids]},
-            "suitability_score": {"type": "integer", "minimum": 1, "maximum": 5},
+            "suitability_band": {
+                "type": "string",
+                "enum": list(SUITABILITY_BANDS),
+            },
             "relevance_category": {
                 "type": "string",
                 "enum": list(RELEVANCE_CATEGORIES),
@@ -420,7 +419,7 @@ def _action_assessment_schema(case: dict[str, Any]) -> dict[str, Any]:
         },
         "required": [
             "matched_action_id",
-            "suitability_score",
+            "suitability_band",
             "relevance_category",
             "confidence",
             "rationale",
@@ -457,7 +456,10 @@ def _interaction_action_schema(
                     "additionalProperties": False,
                 },
             },
-            "suitability_score": {"type": "integer", "minimum": 1, "maximum": 5},
+            "suitability_band": {
+                "type": "string",
+                "enum": list(SUITABILITY_BANDS),
+            },
             "relevance_category": {
                 "type": "string",
                 "enum": list(RELEVANCE_CATEGORIES),
@@ -494,7 +496,7 @@ def _interaction_action_schema(
         },
         "required": [
             "matched_actions",
-            "suitability_score",
+            "suitability_band",
             "relevance_category",
             "rationale",
             "criterion_evidence",
@@ -580,7 +582,7 @@ Recognition rules:
 - Confidence is semantic confidence that the learner actually completed the bounded action, not confidence that it would be clinically advisable.
 - For criterion_evidence, return only rubric criteria for which this turn contains meaningful demonstrated, partial, or concerning evidence. Quote the learner's exact words from proposed_action or spoken_words. Do not treat absence in one turn as failure. Do not reuse evidence from earlier turns.
 
-Score the combined turn from 1 (clearly concerning) to 5 (strongly appropriate). Relevance must be direct, supportive, tangential, unclear, or counterproductive. Do not invent clinical facts, consent, observations, medicines, treatment effects, or hidden events. Return only the schema-defined JSON.
+Classify the combined turn within this qualitative suitability range: clearly_concerning, concerning, mixed_or_unclear, appropriate, or strongly_appropriate. Relevance must be direct, supportive, tangential, unclear, or counterproductive. Do not invent clinical facts, consent, observations, medicines, treatment effects, or hidden events. Return only the schema-defined JSON.
 
 CONTEXT JSON:
 """ + json.dumps(context, ensure_ascii=False)
@@ -622,14 +624,14 @@ def _action_assessment_prompt(case: dict[str, Any], session: dict[str, Any], act
         "learner_proposed_action": action_text,
         "learner_spoken_words": dialogue_text,
     }
-    return """Assess one proposed action in an entirely fictional nursing-education simulation. Interpret ordinary natural language rather than requiring a scripted phrase. Consider the proposed action and the learner's spoken words together, but score the action's suitability for this patient at this exact moment.
+    return """Assess one proposed action in an entirely fictional nursing-education simulation. Interpret ordinary natural language rather than requiring a scripted phrase. Consider the proposed action and the learner's spoken words together, then classify its suitability for this patient at this exact moment.
 
-Score definitions:
-1 = clearly concerning or incompatible with the revealed situation
-2 = concerning, mistimed, or missing an important requirement
-3 = mixed, ambiguous, or needs clarification/facilitator judgement
-4 = appropriate with no major concern
-5 = strongly appropriate, timely and well fitted to the patient's needs
+Suitability range:
+- clearly_concerning: incompatible with the revealed situation
+- concerning: mistimed or missing an important requirement
+- mixed_or_unclear: ambiguous or needs clarification/facilitator judgement
+- appropriate: suitable with no major concern
+- strongly_appropriate: especially well fitted to the patient's needs
 
 Relevance definitions:
 - direct: advances an important need or decision in the current encounter
@@ -638,9 +640,9 @@ Relevance definitions:
 - unclear: intent or connection to the situation cannot be established
 - counterproductive: conflicts with safety, consent, dignity or the patient's current need
 
-Map matched_action_id to a bounded action only when the learner's meaning is genuinely equivalent. Use "none" for a reasonable action outside the bounded state engine as well as for irrelevant or unsafe actions. Confidence describes the semantic mapping, not confidence in the score.
+Map matched_action_id to a bounded action only when the learner's meaning is genuinely equivalent. Use "none" for a reasonable action outside the bounded state engine as well as for irrelevant or unsafe actions. Confidence describes only the semantic mapping.
 
-Base the score only on the supplied fictional context and criteria. Do not invent observations, diagnoses, medicines, doses, treatment effects, consent or hidden events. Do not make a competence decision. Return only the schema-defined JSON.
+Base the suitability band only on the supplied fictional context and criteria. Do not invent observations, diagnoses, medicines, doses, treatment effects, consent or hidden events. Do not make a competence decision. Return only the schema-defined JSON.
 
 CONTEXT JSON:
 """ + json.dumps(context, ensure_ascii=False)
@@ -653,12 +655,11 @@ def assess_proposed_action(
     dialogue_text: str = "",
     model=None,
 ) -> ActionAssessment:
-    """Use AI to score natural-language action suitability and map bounded intent."""
+    """Use AI to classify natural-language action suitability and map bounded intent."""
 
     fallback = ActionAssessment(
         None,
-        3,
-        _score_band(3),
+        "mixed_or_unclear",
         "unclear",
         0.0,
         "The action needs facilitator review because AI assessment is unavailable.",
@@ -678,14 +679,14 @@ def assess_proposed_action(
         action_id = str(payload["matched_action_id"])
         allowed_ids = {action["action_id"] for action in case["allowed_actions"]}
         matched_action_id = action_id if action_id in allowed_ids else None
-        score = int(payload["suitability_score"])
+        suitability_band = str(payload["suitability_band"])
         relevance = str(payload["relevance_category"])
         confidence = max(0.0, min(1.0, float(payload["confidence"])))
         rationale = " ".join(str(payload["rationale"]).split())[:500]
     except (Exception, KeyError, TypeError, ValueError):
         return fallback
     if (
-        score not in range(1, 6)
+        suitability_band not in SUITABILITY_BANDS
         or relevance not in RELEVANCE_CATEGORIES
         or not rationale
         or _contains_unsafe_dose(rationale)
@@ -693,8 +694,7 @@ def assess_proposed_action(
         return fallback
     return ActionAssessment(
         matched_action_id,
-        score,
-        _score_band(score),
+        suitability_band,
         relevance,
         confidence,
         rationale,
@@ -713,8 +713,7 @@ def assess_interaction_actions(
 
     fallback = ActionAssessment(
         None,
-        3,
-        _score_band(3),
+        "mixed_or_unclear",
         "unclear",
         0.0,
         "The interaction needs facilitator review because AI assessment is unavailable.",
@@ -735,7 +734,7 @@ def assess_interaction_actions(
         )
         raw = getattr(response, "text", "").strip().replace("```json", "").replace("```", "")
         payload = json.loads(raw)
-        score = int(payload["suitability_score"])
+        suitability_band = str(payload["suitability_band"])
         relevance = str(payload["relevance_category"])
         rationale = " ".join(str(payload["rationale"]).split())[:500]
         raw_matches = payload["matched_actions"]
@@ -804,7 +803,7 @@ def assess_interaction_actions(
     except (Exception, KeyError, TypeError, ValueError):
         return fallback
     if (
-        score not in range(1, 6)
+        suitability_band not in SUITABILITY_BANDS
         or relevance not in RELEVANCE_CATEGORIES
         or not rationale
         or _contains_unsafe_dose(rationale)
@@ -814,8 +813,7 @@ def assess_interaction_actions(
     primary_confidence = confidences[0] if confidences else 0.0
     return ActionAssessment(
         primary_id,
-        score,
-        _score_band(score),
+        suitability_band,
         relevance,
         primary_confidence,
         rationale,
@@ -871,9 +869,9 @@ def _fallback_evaluation(
     if action_assessment is not None and action_assessment.generated:
         rating = (
             "appropriate"
-            if action_assessment.suitability_score >= 4
+            if action_assessment.suitability_band in {"appropriate", "strongly_appropriate"}
             else "concerning"
-            if action_assessment.suitability_score <= 2
+            if action_assessment.suitability_band in {"clearly_concerning", "concerning"}
             else "unclear"
         )
         if action_status == "blocked":
@@ -1035,7 +1033,6 @@ def generate_interaction_evaluation(
         "matched_authored_action": matched_action_label,
         "action_suitability_assessment": (
             {
-                "score_out_of_5": action_assessment.suitability_score,
                 "band": action_assessment.suitability_band,
                 "relevance": action_assessment.relevance_category,
                 "rationale": action_assessment.rationale,
